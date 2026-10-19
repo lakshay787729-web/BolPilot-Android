@@ -2,6 +2,8 @@ package in.examdarpan.vaanix
 
 import android.Manifest
 import android.app.AlertDialog
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -331,7 +333,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             "Voice recognition doesn't start" to "Allow Microphone permission in Android Settings. Make sure the device has a speech recognition service installed.",
             "The app doesn't open the requested app" to "Check that the app is installed and that its package is available on this Android device.",
             "Google sign-in isn't configured" to "Add the google-services.json for application ID in.examdarpan.vaanix, enable Google in Firebase Authentication, and ensure the Web OAuth client is generated.",
-            "Background listening" to "This starter intentionally uses tap-to-talk. Always-on hotword detection is not enabled; Android background microphone restrictions and battery use need a separate implementation."
+            "Background listening" to "This starter intentionally uses tap-to-talk. Always-on hotword detection is not enabled; Android background microphone restrictions and battery use need a separate implementation.",
+            "Lock phone by voice" to "Say lock phone. Android asks you to enable BolPilot as a device administrator before it can lock the screen. This does not bypass the PIN, password, or biometric unlock."
         )
         entries.forEach { (title, body) ->
             val c = cardColumn(); c.addView(text(title, 16f, white, true)); c.addView(text(body, 13f, muted).apply { setPadding(0, dp(7), 0, 0) })
@@ -405,6 +408,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val q = command.lowercase(Locale.ROOT)
         val result: String
         when {
+            q.contains("lock phone") || q.contains("lock screen") || q.contains("screen lock") || q.contains("फोन लॉक") || q.contains("मोबाइल लॉक") || q.contains("स्क्रीन लॉक") -> {
+                result = lockPhoneScreen()
+                speak(if (responseLanguage == "hi-IN") "Screen lock ke liye device administrator permission zaroori hai. Prompt ko approve karein." else result)
+            }
             q.contains("time") || q.contains("समय") || q.contains("टाइम") || q.contains("kitne baje") -> {
                 val time = SimpleDateFormat("hh:mm a", if (responseLanguage == "hi-IN") Locale("hi", "IN") else Locale.US).format(Date())
                 result = if (responseLanguage == "hi-IN") "Abhi samay $time hai" else "The time is $time"
@@ -455,6 +462,23 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         addHistory(command, result)
         updateStatus(result)
         if (currentPage == "home") showPage("home")
+    }
+
+    private fun lockPhoneScreen(): String {
+        val policy = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = ComponentName(this, BolPilotDeviceAdminReceiver::class.java)
+        if (!policy.isAdminActive(admin)) {
+            return try {
+                val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                    putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+                    putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "BolPilot needs permission only to lock your screen when you explicitly ask. It cannot bypass your secure unlock method.")
+                }
+                startActivity(intent)
+                "Approve BolPilot's device administrator permission, then say 'lock phone' again."
+            } catch (e: Exception) { "Unable to open device administrator settings: " + (e.localizedMessage ?: "unknown error") }
+        }
+        return try { policy.lockNow(); "Locking the screen now" }
+        catch (e: SecurityException) { "Screen lock permission isn't active. Enable BolPilot under device administrator settings." }
     }
 
     private fun openPackage(packageName: String, displayName: String): String {
