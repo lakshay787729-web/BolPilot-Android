@@ -1,4 +1,4 @@
-package in.examdarpan.vaanix
+package `in`.examdarpan.vaanix
 
 import android.Manifest
 import android.app.AlertDialog
@@ -186,7 +186,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF0757A8.toInt(), 0xFF06234B.toInt())).apply {
                 shape = GradientDrawable.OVAL; setStroke(dp(2), cyan)
             }
-            elevation = dp(8)
+            elevation = dp(8).toFloat()
             contentDescription = "Start voice command"
             setOnClickListener { toggleListening() }
         }
