@@ -442,6 +442,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     speak(if (responseLanguage == "hi-IN") "Kripya phone number boliye" else result)
                 }
             }
+            q.startsWith("search google for ") || q.startsWith("google par search karo ") || q.startsWith("search for ") || q.startsWith("खोजो ") || q.startsWith("सर्च करो ") -> {
+                val query = when {
+                    q.startsWith("search google for ") -> command.substringAfter("search google for ", "")
+                    q.startsWith("google par search karo ") -> command.substringAfter("google par search karo ", "")
+                    q.startsWith("search for ") -> command.substringAfter("search for ", "")
+                    q.startsWith("खोजो ") -> command.substringAfter("खोजो ", "")
+                    else -> command.substringAfter("सर्च करो ", "")
+                }.trim()
+                if (query.isNotBlank()) {
+                    result = try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query)))); "Searching Google for $query" }
+                    catch (_: Exception) { "Couldn't open Google Search" }
+                } else result = "Say: search Google for weather"
+                speak(if (responseLanguage == "hi-IN") "Google par search kar raha hoon" else result)
+            }
+            q.contains("gmail") || q.contains("जीमेल") -> { result = openPackage("com.google.android.gm", "Gmail") }
+            q.contains("instagram") || q.contains("इंस्टाग्राम") -> { result = openPackage("com.instagram.android", "Instagram") }
+            q.contains("telegram") || q.contains("टेलीग्राम") -> { result = openPackage("org.telegram.messenger", "Telegram") }
+            q.contains("facebook") || q.contains("फेसबुक") -> { result = openPackage("com.facebook.katana", "Facebook") }
             q.contains("youtube") || q.contains("यूट्यूब") -> { result = openPackage("com.google.android.youtube", "YouTube") }
             q.contains("whatsapp") || q.contains("व्हाट्सएप") -> { result = openPackage("com.whatsapp", "WhatsApp") }
             q.contains("chrome") || q.contains("browser") || q.contains("ब्राउज़र") -> { result = openPackage("com.android.chrome", "Chrome") }
