@@ -12,6 +12,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.PowerManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -34,7 +35,9 @@ class BolPilotListeningService : Service() {
 
     private var recognizer: SpeechRecognizer? = null
     private var stopping = false
-    private var restartCount = 0
+    private var restartPending = false
+    private var lastCommandAt = 0L
+    private var lastCommandText = ""
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -119,14 +122,21 @@ class BolPilotListeningService : Service() {
     }
 
     private fun scheduleRestart() {
-        if (stopping) return
-        // SpeechRecognizer sessions are one-shot; create a fresh session after each phrase/error.
-        android.os.Handler(mainLooper).postDelayed({ if (!stopping) startRecognition() }, 650L)
+        if (stopping || restartPending) return
+        restartPending = true
+        android.os.Handler(mainLooper).postDelayed({
+            restartPending = false
+            if (!stopping) startRecognition()
+        }, 900L)
     }
 
     private fun handleCommand(raw: String) {
         val phrase = raw.trim()
         val q = phrase.lowercase(Locale.ROOT)
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (q == lastCommandText && now - lastCommandAt < 2500L) return
+        lastCommandText = q
+        lastCommandAt = now
         when {
             q.startsWith("open ") || q.startsWith("launch ") || q.startsWith("start ") ||
                 q.startsWith("खोलो ") || q.startsWith("खोल ") || q.startsWith("चालू करो ") -> {
@@ -154,7 +164,10 @@ class BolPilotListeningService : Service() {
                     runCatching { startActivity(search) }
                 }
             }
-            q.contains("lock phone") || q.contains("lock screen") || q.contains("फोन लॉक") || q.contains("मोबाइल लॉक") || q.contains("स्क्रीन लॉक") -> lockScreen()
+            q.contains("lock phone") || q.contains("lock screen") || q.contains("screen lock") ||
+                q.contains("फोन लॉक") || q.contains("मोबाइल लॉक") || q.contains("स्क्रीन लॉक") -> lockScreen()
+            q.contains("wake screen") || q.contains("turn screen on") || q.contains("unlock phone") ||
+                q.contains("unlock screen") || q.contains("फोन अनलॉक") || q.contains("स्क्रीन चालू") -> wakeScreenForUnlock()
             q.contains("open settings") || q.contains("सेटिंग खोलो") -> {
                 runCatching { startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             }
@@ -178,6 +191,24 @@ class BolPilotListeningService : Service() {
             .setClassName(match.activityInfo.packageName, match.activityInfo.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { startActivity(launch) }
+    }
+
+    private fun wakeScreenForUnlock() {
+        // Wake the display, but never bypass the owner's PIN, password, or biometric.
+        val power = getSystemService(POWER_SERVICE) as PowerManager
+        @Suppress("DEPRECATION")
+        val wakeLock = power.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            "BolPilot:VoiceWake"
+        )
+        try {
+            wakeLock.acquire(2500L)
+            updateNotification("Screen awakened. Unlock with your normal PIN or biometric.")
+        } catch (_: Exception) {
+            updateNotification("Wake the screen and unlock with your normal security method.")
+        } finally {
+            if (wakeLock.isHeld) wakeLock.release()
+        }
     }
 
     private fun lockScreen() {
