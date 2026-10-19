@@ -1,7 +1,9 @@
-package in.examdarpan.vaanix
+package `in`.examdarpan.vaanix
 
 import android.Manifest
 import android.app.AlertDialog
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -184,7 +186,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF0757A8.toInt(), 0xFF06234B.toInt())).apply {
                 shape = GradientDrawable.OVAL; setStroke(dp(2), cyan)
             }
-            elevation = dp(8)
+            elevation = dp(8).toFloat()
             contentDescription = "Start voice command"
             setOnClickListener { toggleListening() }
         }
@@ -331,7 +333,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             "Voice recognition doesn't start" to "Allow Microphone permission in Android Settings. Make sure the device has a speech recognition service installed.",
             "The app doesn't open the requested app" to "Check that the app is installed and that its package is available on this Android device.",
             "Google sign-in isn't configured" to "Add the google-services.json for application ID in.examdarpan.vaanix, enable Google in Firebase Authentication, and ensure the Web OAuth client is generated.",
-            "Background listening" to "This starter intentionally uses tap-to-talk. Always-on hotword detection is not enabled; Android background microphone restrictions and battery use need a separate implementation."
+            "Background listening" to "This starter intentionally uses tap-to-talk. Always-on hotword detection is not enabled; Android background microphone restrictions and battery use need a separate implementation.",
+            "Lock phone by voice" to "Say lock phone. Android asks you to enable BolPilot as a device administrator before it can lock the screen. This does not bypass the PIN, password, or biometric unlock."
         )
         entries.forEach { (title, body) ->
             val c = cardColumn(); c.addView(text(title, 16f, white, true)); c.addView(text(body, 13f, muted).apply { setPadding(0, dp(7), 0, 0) })
@@ -405,6 +408,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val q = command.lowercase(Locale.ROOT)
         val result: String
         when {
+            q.contains("lock phone") || q.contains("lock screen") || q.contains("screen lock") || q.contains("फोन लॉक") || q.contains("मोबाइल लॉक") || q.contains("स्क्रीन लॉक") -> {
+                result = lockPhoneScreen()
+                speak(if (responseLanguage == "hi-IN") "Screen lock ke liye device administrator permission zaroori hai. Prompt ko approve karein." else result)
+            }
             q.contains("time") || q.contains("समय") || q.contains("टाइम") || q.contains("kitne baje") -> {
                 val time = SimpleDateFormat("hh:mm a", if (responseLanguage == "hi-IN") Locale("hi", "IN") else Locale.US).format(Date())
                 result = if (responseLanguage == "hi-IN") "Abhi samay $time hai" else "The time is $time"
@@ -435,6 +442,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     speak(if (responseLanguage == "hi-IN") "Kripya phone number boliye" else result)
                 }
             }
+            q.startsWith("search google for ") || q.startsWith("google par search karo ") || q.startsWith("search for ") || q.startsWith("खोजो ") || q.startsWith("सर्च करो ") -> {
+                val query = when {
+                    q.startsWith("search google for ") -> command.substringAfter("search google for ", "")
+                    q.startsWith("google par search karo ") -> command.substringAfter("google par search karo ", "")
+                    q.startsWith("search for ") -> command.substringAfter("search for ", "")
+                    q.startsWith("खोजो ") -> command.substringAfter("खोजो ", "")
+                    else -> command.substringAfter("सर्च करो ", "")
+                }.trim()
+                if (query.isNotBlank()) {
+                    result = try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query)))); "Searching Google for $query" }
+                    catch (_: Exception) { "Couldn't open Google Search" }
+                } else result = "Say: search Google for weather"
+                speak(if (responseLanguage == "hi-IN") "Google par search kar raha hoon" else result)
+            }
+            q.contains("gmail") || q.contains("जीमेल") -> { result = openPackage("com.google.android.gm", "Gmail") }
+            q.contains("instagram") || q.contains("इंस्टाग्राम") -> { result = openPackage("com.instagram.android", "Instagram") }
+            q.contains("telegram") || q.contains("टेलीग्राम") -> { result = openPackage("org.telegram.messenger", "Telegram") }
+            q.contains("facebook") || q.contains("फेसबुक") -> { result = openPackage("com.facebook.katana", "Facebook") }
             q.contains("youtube") || q.contains("यूट्यूब") -> { result = openPackage("com.google.android.youtube", "YouTube") }
             q.contains("whatsapp") || q.contains("व्हाट्सएप") -> { result = openPackage("com.whatsapp", "WhatsApp") }
             q.contains("chrome") || q.contains("browser") || q.contains("ब्राउज़र") -> { result = openPackage("com.android.chrome", "Chrome") }
@@ -455,6 +480,23 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         addHistory(command, result)
         updateStatus(result)
         if (currentPage == "home") showPage("home")
+    }
+
+    private fun lockPhoneScreen(): String {
+        val policy = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = ComponentName(this, BolPilotDeviceAdminReceiver::class.java)
+        if (!policy.isAdminActive(admin)) {
+            return try {
+                val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                    putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+                    putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "BolPilot needs permission only to lock your screen when you explicitly ask. It cannot bypass your secure unlock method.")
+                }
+                startActivity(intent)
+                "Approve BolPilot's device administrator permission, then say 'lock phone' again."
+            } catch (e: Exception) { "Unable to open device administrator settings: " + (e.localizedMessage ?: "unknown error") }
+        }
+        return try { policy.lockNow(); "Locking the screen now" }
+        catch (e: SecurityException) { "Screen lock permission isn't active. Enable BolPilot under device administrator settings." }
     }
 
     private fun openPackage(packageName: String, displayName: String): String {
