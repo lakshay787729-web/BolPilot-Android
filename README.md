@@ -7,7 +7,7 @@ This is a source-code Android Studio project for BolPilot, keeping the existing 
 - Dark navy / cyan BolPilot interface and adaptive launcher icon.
 - Tap-to-talk speech recognition using Android's speech service.
 - Spoken responses using Android TextToSpeech.
-- Commands: current time/date, battery percentage, Google web search, open YouTube/WhatsApp/Chrome/Maps/Camera/Gmail/Instagram/Telegram/Facebook, open Android Settings, and open the dialer after a confirmation prompt.
+- Commands: current time/date, battery percentage, Google web search, common apps, and installed launcher apps by spoken app name when Android exposes them to the app.
 - Optional voice-triggered screen lock after the user explicitly enables Android Device Administrator permission. This can lock the screen but cannot bypass PIN, password, or biometric unlock.
 - Hindi (India) and English (US) speech selection.
 - Local command history (up to 50 items) and settings stored on-device.
@@ -18,7 +18,7 @@ This is a source-code Android Studio project for BolPilot, keeping the existing 
 
 - This is a real starter implementation, not a verified Play Store release. It has not been built on your local Android SDK in this environment.
 - Speech recognition availability and language support depend on the Android device and installed speech service.
-- Background always-on hotword detection is intentionally not enabled; tap-to-talk is used to respect Android background microphone restrictions.
+- Optional hands-free foreground listening can be started from Home while the app is visible. Android displays a persistent notification with a Stop control. It uses the device speech-recognition service and is not a dedicated offline wake-word engine; recognition may stop or be restricted by OEM battery policies, Android version, or speech-provider behavior. It should be tested on real devices.
 - Voice screen lock requires the user to explicitly approve Android's device administrator prompt. The app does not request remote wipe or other device-admin policies.
 - Premium screen is a truthful placeholder until subscription products and billing verification are configured. It does not pretend to sell subscriptions.
 - Firebase Google Sign-In requires your own `google-services.json`, Firebase Authentication Google provider, and OAuth Web Client ID. Do not upload private service-account keys.
@@ -49,4 +49,4 @@ If the Web Client ID error remains, inspect the generated `default_web_client_id
 
 ## GitHub Actions build
 
-The workflow runs on pushes to `main` and `chore/**`, pull requests to `main`, and manual dispatch. It uses JDK 17 and runs `./gradlew --no-daemon assembleDebug`.
+The workflow runs on pushes to `main`, pull requests to `main`, and manual dispatch. It uses JDK 17 and runs `./gradlew --no-daemon assembleDebug`.
