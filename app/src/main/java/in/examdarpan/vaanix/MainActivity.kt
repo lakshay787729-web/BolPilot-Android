@@ -198,6 +198,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         statusText = text(if (listening) "Speak now" else "Press the microphone to start", 14f, muted).apply { gravity = Gravity.CENTER }
         micCard.addView(statusText)
         col.addView(micCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
+        val handsFree = button("◉  Enable hands-free mode", 0xFF0B4565.toInt(), cyan) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            } else {
+                try {
+                    val intent = Intent(this, BolPilotListeningService::class.java)
+                    intent.action = BolPilotListeningService.ACTION_START
+                    ContextCompat.startForegroundService(this, intent)
+                    toast("Hands-free mode starting. Use its notification to stop listening.")
+                } catch (e: Exception) { toast("Could not start hands-free mode: ${e.localizedMessage ?: "unknown error"}") }
+            }
+        }
+        handsFree.textSize = 14f
+        col.addView(handsFree, LinearLayout.LayoutParams(-1, dp(52)).apply { bottomMargin = dp(16) })
+
 
         col.addView(sectionTitle("TRY SAYING"))
         val chips = listOf("Open YouTube", "What time is it?", "Open WhatsApp", "Today's date", "Open settings", "Battery status")
@@ -333,7 +348,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             "Voice recognition doesn't start" to "Allow Microphone permission in Android Settings. Make sure the device has a speech recognition service installed.",
             "The app doesn't open the requested app" to "Check that the app is installed and that its package is available on this Android device.",
             "Google sign-in isn't configured" to "Add the google-services.json for application ID in.examdarpan.vaanix, enable Google in Firebase Authentication, and ensure the Web OAuth client is generated.",
-            "Background listening" to "This starter intentionally uses tap-to-talk. Always-on hotword detection is not enabled; Android background microphone restrictions and battery use need a separate implementation.",
+            "Background listening" to "Enable hands-free mode from Home while BolPilot is visible and grant microphone permission. Android keeps a foreground notification while listening. Availability depends on the device speech service, battery settings, and Android restrictions. Say app names or supported commands; this is not a fully offline wake-word engine.",
             "Lock phone by voice" to "Say lock phone. Android asks you to enable BolPilot as a device administrator before it can lock the screen. This does not bypass the PIN, password, or biometric unlock."
         )
         entries.forEach { (title, body) ->
