@@ -39,12 +39,12 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
-    private val navy = Color.rgb(3, 13, 32)
-    private val panel = Color.rgb(8, 27, 59)
-    private val panel2 = Color.rgb(11, 39, 79)
-    private val cyan = Color.rgb(8, 217, 245)
+    private val navy = Color.rgb(7, 10, 28)
+    private val panel = Color.rgb(17, 24, 52)
+    private val panel2 = Color.rgb(27, 36, 73)
+    private val cyan = Color.rgb(101, 232, 255)
     private val white = Color.rgb(246, 249, 255)
-    private val muted = Color.rgb(171, 187, 215)
+    private val muted = Color.rgb(168, 180, 207)
     private val red = Color.rgb(255, 105, 122)
 
     private lateinit var root: LinearLayout
@@ -123,8 +123,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             setPadding(0, dp(8), 0, dp(12))
         }
         val brandColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        brandColumn.addView(text("BolPilot", 29f, white, true))
-        brandColumn.addView(text("YOUR VOICE, SMARTER PHONE", 10f, cyan, true).apply { letterSpacing = .12f })
+        brandColumn.addView(text("BolPilot", 30f, white, true))
+        brandColumn.addView(text("YOUR PHONE. YOUR VOICE.", 10f, cyan, true).apply { letterSpacing = .16f })
         header.addView(brandColumn, LinearLayout.LayoutParams(0, -2, 1f))
         val profile = button("●", panel2, white) { showPage("profile") }
         profile.textSize = 20f
@@ -137,7 +137,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val nav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            background = rounded(panel2, 32)
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFF182343.toInt(), 0xFF202A50.toInt(), 0xFF182343.toInt())).apply { cornerRadius = dp(24).toFloat(); setStroke(dp(1), 0xFF334567.toInt()) }
             setPadding(dp(6), dp(5), dp(6), dp(5))
         }
         nav.addView(navButton("⌂\nHome", "home"), LinearLayout.LayoutParams(0, dp(58), 1f))
@@ -172,18 +172,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun homePage(): View {
         val scroll = ScrollView(this).apply { isFillViewport = true; overScrollMode = View.OVER_SCROLL_NEVER }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(18)) }
-        val hello = text(if (signedInName != null) "Welcome back, ${signedInName!!.substringBefore(' ')}" else "Your phone, hands-free", 22f, white, true)
+        val hello = text(if (signedInName != null) "Welcome back, ${signedInName!!.substringBefore(' ')}" else "Meet your voice companion", 24f, white, true)
         col.addView(hello)
-        col.addView(text("Tap the mic and tell BolPilot what to do.", 14f, muted).apply { setPadding(0, dp(5), 0, dp(14)) })
+        col.addView(text("Speak naturally. Get things done.", 14f, muted).apply { setPadding(0, dp(5), 0, dp(18)) })
 
         val micCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = rounded(panel, 28)
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF19254C.toInt(), 0xFF10172F.toInt(), 0xFF102C45.toInt())).apply { cornerRadius = dp(30).toFloat(); setStroke(dp(1), 0xFF31476B.toInt()) }
             setPadding(dp(16), dp(22), dp(16), dp(22))
         }
         val mic = TextView(this).apply {
-            text = if (listening) "Ⅱ" else "🎙"
+            text = if (listening) "Ⅱ" else "✦"
             textSize = 38f; gravity = Gravity.CENTER; setTextColor(white)
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF0757A8.toInt(), 0xFF06234B.toInt())).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF2F80ED.toInt(), 0xFF7048E8.toInt(), 0xFF0A8FAD.toInt())).apply {
                 shape = GradientDrawable.OVAL; setStroke(dp(2), cyan)
             }
             elevation = dp(8).toFloat()
@@ -191,14 +191,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             setOnClickListener { toggleListening() }
         }
         micCard.addView(mic, LinearLayout.LayoutParams(dp(118), dp(118)))
-        val status = text(if (listening) "LISTENING…" else "READY WHEN YOU ARE", 13f, cyan, true).apply {
+        val status = text(if (listening) "LISTENING…" else "YOUR ASSISTANT IS READY", 13f, cyan, true).apply {
             gravity = Gravity.CENTER; letterSpacing = .12f; setPadding(0, dp(18), 0, dp(7))
         }
         micCard.addView(status)
-        statusText = text(if (listening) "Speak now" else "Press the microphone to start", 14f, muted).apply { gravity = Gravity.CENTER }
+        statusText = text(if (listening) "Speak now" else "Tap to talk · Hands-free mode below", 14f, muted).apply { gravity = Gravity.CENTER }
         micCard.addView(statusText)
         col.addView(micCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
-        val handsFree = button("◉  Enable hands-free mode", 0xFF0B4565.toInt(), cyan) {
+        val handsFree = button("◉  TURN ON HANDS-FREE", 0xFF163F65.toInt(), cyan) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             } else {
@@ -215,6 +215,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
 
         col.addView(sectionTitle("TRY SAYING"))
+        col.addView(text("Quick commands", 18f, white, true).apply { setPadding(0, dp(3), 0, dp(10)) })
         val chips = listOf("Open YouTube", "What time is it?", "Open WhatsApp", "Today's date", "Open settings", "Battery status")
         val chipWrap = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         chips.chunked(2).forEach { pair ->
@@ -229,13 +230,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
         col.addView(chipWrap)
 
-        col.addView(sectionTitle("LATEST ACTIVITY"))
+        col.addView(sectionTitle("YOUR ACTIVITY"))
         val activityCard = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = rounded(panel, 20); setPadding(dp(16), dp(14), dp(16), dp(14)) }
         lastCommandText = text(history.firstOrNull()?.let { "“${it.command}”\n${it.result} · ${it.time}" } ?: "Your recent commands will appear here after you try the mic.", 14f, muted)
         activityCard.addView(lastCommandText)
         col.addView(activityCard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2); bottomMargin = dp(16) })
 
-        val premium = button("Explore BolPilot Premium  →", 0xFF063A6C.toInt(), cyan) { showPage("premium") }
+        val premium = button("Explore BolPilot Premium  ↗", 0xFF393078.toInt(), cyan) { showPage("premium") }
         premium.textSize = 15f
         col.addView(premium, LinearLayout.LayoutParams(-1, dp(54)))
         scroll.addView(col)
@@ -244,8 +245,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun historyPage(): View {
         val col = pageColumn()
-        col.addView(text("Command history", 25f, white, true))
-        col.addView(text("Commands processed on this device", 14f, muted).apply { setPadding(0, dp(4), 0, dp(16)) })
+        col.addView(text("Your activity", 27f, white, true))
+        col.addView(text("A clear view of what BolPilot did for you", 14f, muted).apply { setPadding(0, dp(4), 0, dp(16)) })
         if (history.isEmpty()) {
             val empty = cardColumn()
             empty.addView(text("◷", 42f, cyan, true).apply { gravity = Gravity.CENTER })
@@ -270,8 +271,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun settingsPage(): View {
         val col = pageColumn()
-        col.addView(text("Settings", 27f, white, true))
-        col.addView(text("Make BolPilot work your way", 14f, muted).apply { setPadding(0, dp(4), 0, dp(18)) })
+        col.addView(text("Make it yours", 27f, white, true))
+        col.addView(text("Personalize your voice assistant", 14f, muted).apply { setPadding(0, dp(4), 0, dp(18)) })
         col.addView(sectionTitle("VOICE"))
         val languageCard = cardColumn()
         languageCard.addView(text("Voice language", 16f, white, true))
@@ -302,8 +303,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun profilePage(): View {
         val col = pageColumn()
-        col.addView(text("Your account", 27f, white, true))
-        col.addView(text("Keep your experience connected", 14f, muted).apply { setPadding(0, dp(4), 0, dp(18)) })
+        col.addView(text("Your BolPilot", 27f, white, true))
+        col.addView(text("Your assistant, your settings", 14f, muted).apply { setPadding(0, dp(4), 0, dp(18)) })
         val card = cardColumn()
         card.addView(text("◉", 42f, cyan, true).apply { gravity = Gravity.CENTER })
         card.addView(text(signedInName ?: "You're using BolPilot as a guest", 17f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(5)) })
@@ -611,7 +612,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun pageColumn() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(18)) }
     private fun wrapScroll(view: View): View = ScrollView(this).apply { isFillViewport = true; overScrollMode = View.OVER_SCROLL_NEVER; addView(view) }
-    private fun cardColumn() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = rounded(panel, 20); setPadding(dp(16), dp(16), dp(16), dp(16)) }
+    private fun cardColumn() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF1B2547.toInt(), 0xFF111A34.toInt())).apply { cornerRadius = dp(22).toFloat(); setStroke(dp(1), 0xFF2B3D60.toInt()) }; setPadding(dp(16), dp(16), dp(16), dp(16)) }
     private fun sectionTitle(s: String) = text(s, 11f, cyan, true).apply { letterSpacing = .14f; setPadding(dp(2), dp(8), 0, dp(10)) }
     private fun text(value: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
         text = value; textSize = size; setTextColor(color); if (bold) setTypeface(typeface, Typeface.BOLD)
@@ -619,7 +620,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
     private fun button(label: String, bg: Int, fg: Int, action: () -> Unit): TextView = TextView(this).apply {
         text = label; textSize = 14f; gravity = Gravity.CENTER; setTextColor(fg); setTypeface(typeface, Typeface.BOLD)
-        background = rounded(bg, 18); setPadding(dp(10), dp(8), dp(10), dp(8)); isClickable = true; isFocusable = true
+        background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(bg, panel2)).apply { cornerRadius = dp(18).toFloat(); setStroke(dp(1), 0xFF354B72.toInt()) }; setPadding(dp(10), dp(8), dp(10), dp(8)); isClickable = true; isFocusable = true
         setOnClickListener { action() }
     }
     private fun actionRow(title: String, subtitle: String, actionLabel: String, action: () -> Unit): View {
