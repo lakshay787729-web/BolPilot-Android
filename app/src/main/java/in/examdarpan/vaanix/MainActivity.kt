@@ -2042,4 +2042,268 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         statusCard.addView(TextView(this).apply {
-            text = "Premium
+            text = "PREMIUM ACTIVE"
+            textSize = 11f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#15803D"))
+            setPadding(18, 10, 18, 10)
+            background = createCard("#DCFCE7", "#BBF7D0", 40f)
+        })
+        root.addView(statusCard)
+        root.addView(TextView(this).apply {
+            text = "Subscription status shown here reflects this device's saved app state. Payment provider confirmation is required to verify billing."
+            textSize = 12f
+            setTextColor(Color.parseColor("#64748B"))
+            setPadding(8, 22, 8, 0)
+        })
+        mainContainer.addView(root)
+    }
+
+    private fun showInvoiceScreen() {
+        currentScreen = "INVOICE"
+        mainContainer.removeAllViews()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#F5F6F8"))
+            setPadding(50, 100, 50, 50)
+        }
+        root.addView(TextView(this).apply {
+            text = "‹   Payment & Invoice"
+            textSize = 22f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0F172A"))
+            setPadding(0, 0, 0, 28)
+            setOnClickListener { showAccountSettingsScreen() }
+        })
+        root.addView(TextView(this).apply {
+            text = "No verified invoice history is available in this app yet. Please check your payment provider receipt for confirmed transactions."
+            textSize = 15f
+            setTextColor(Color.parseColor("#475569"))
+            setPadding(28, 30, 28, 30)
+            background = createCard("#FFFFFF", "#E2E8F0", 28f)
+        })
+        mainContainer.addView(root)
+    }
+
+    private fun showContactUsScreen(fromPaywall: Boolean) {
+        currentScreen = "CONTACT"
+        mainContainer.removeAllViews()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#F5F6F8"))
+            setPadding(50, 100, 50, 50)
+        }
+        root.addView(TextView(this).apply {
+            text = "‹   Contact Us"
+            textSize = 22f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0F172A"))
+            setPadding(0, 0, 0, 28)
+            setOnClickListener {
+                if (fromPaywall) showRingbookTrialPaywall() else showProfileScreen()
+            }
+        })
+        root.addView(TextView(this).apply {
+            text = "Encode Technologies\\nBolPilot Support\\nFor help, email the support address published on our official website."
+            textSize = 15f
+            setTextColor(Color.parseColor("#334155"))
+            setPadding(28, 30, 28, 30)
+            background = createCard("#FFFFFF", "#E2E8F0", 28f)
+        })
+        mainContainer.addView(root)
+    }
+
+    private fun showLegalScreen(title: String, body: String) {
+        currentScreen = "LEGAL"
+        mainContainer.removeAllViews()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#F5F6F8"))
+            setPadding(50, 100, 50, 50)
+        }
+        root.addView(TextView(this).apply {
+            text = "‹   $title"
+            textSize = 22f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0F172A"))
+            setPadding(0, 0, 0, 28)
+            setOnClickListener { showProfileScreen() }
+        })
+        val scroll = ScrollView(this)
+        scroll.addView(TextView(this).apply {
+            text = body
+            textSize = 14f
+            setTextColor(Color.parseColor("#334155"))
+            setLineSpacing(8f, 1.1f)
+            setPadding(26, 28, 26, 28)
+            background = createCard("#FFFFFF", "#E2E8F0", 28f)
+        })
+        root.addView(scroll)
+        mainContainer.addView(root)
+    }
+
+    private fun showPublicLegalScreen(title: String, body: String) {
+        currentScreen = "LEGAL_PUBLIC"
+        mainContainer.removeAllViews()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#F5F6F8"))
+            setPadding(50, 100, 50, 50)
+        }
+        root.addView(TextView(this).apply {
+            text = "‹   $title"
+            textSize = 22f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0F172A"))
+            setPadding(0, 0, 0, 28)
+            setOnClickListener { showRingbookTrialPaywall() }
+        })
+        root.addView(TextView(this).apply {
+            text = body
+            textSize = 14f
+            setTextColor(Color.parseColor("#334155"))
+            setLineSpacing(8f, 1.1f)
+            setPadding(26, 28, 26, 28)
+            background = createCard("#FFFFFF", "#E2E8F0", 28f)
+        })
+        mainContainer.addView(root)
+    }
+
+    private fun getFullPrivacyPolicyText(): String = """
+        BolPilot Privacy Policy
+
+        BolPilot may process information required to provide account access, voice-command features,
+        permissions, subscription status, and app functionality. Microphone access is used for voice
+        recognition when the user enables listening. Data handling by Google, Firebase, payment
+        providers, and Android services is also governed by their applicable policies.
+
+        Users can disable permissions or stop the voice service from the device. Do not enter sensitive
+        information into voice commands. Contact Encode Technologies through its official support
+        channel for privacy questions.
+    """.trimIndent()
+
+    private fun getFullTermsText(): String = """
+        BolPilot Terms of Service
+
+        BolPilot provides voice-command and phone utility features on supported Android devices.
+        Features depend on Android version, device settings, network availability, granted permissions,
+        and third-party services. Background listening and app launching may be limited by Android.
+
+        Subscription activation and recurring billing must be confirmed by the payment provider.
+        Users should review the displayed price and mandate terms before authorizing payment and may
+        cancel through the supported subscription or payment-provider process.
+    """.trimIndent()
+
+    private fun getFullRefundPolicyText(): String = """
+        BolPilot Refund Policy
+
+        Refund eligibility depends on the applicable purchase terms, payment provider rules, and
+        applicable law. A payment receipt does not by itself guarantee a refund. To request help,
+        contact Encode Technologies through its official support channel and include the transaction
+        reference. Do not share OTPs, passwords, or full payment credentials.
+    """.trimIndent()
+
+    private fun createVectorSubRow(icon: String, title: String, subtitle: String, onClick: () -> Unit): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(8, 18, 8, 18)
+            setOnClickListener { onClick() }
+            addView(createVectorIcon(icon, "#F1F5F9", "#0F172A", 90, true))
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(24, 0, 12, 0)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 15f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor("#0F172A"))
+                })
+                if (subtitle.isNotBlank()) addView(TextView(this@MainActivity).apply {
+                    text = subtitle
+                    textSize = 12f
+                    setTextColor(Color.parseColor("#64748B"))
+                    setPadding(0, 4, 0, 0)
+                })
+            })
+            addView(TextView(this@MainActivity).apply {
+                text = "›"
+                textSize = 22f
+                setTextColor(Color.parseColor("#94A3B8"))
+            })
+        }
+    }
+
+    private fun createRingbookSwitch(checked: Boolean, changed: (Boolean) -> Unit): Switch {
+        return Switch(this).apply {
+            isChecked = checked
+            setOnCheckedChangeListener { _, value -> changed(value) }
+        }
+    }
+
+    private fun createToggleRow(title: String, subtitle: String, checked: Boolean, changed: (Boolean) -> Unit): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 24f)
+            setPadding(24, 22, 24, 22)
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 14f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor("#0F172A"))
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = subtitle
+                    textSize = 12f
+                    setTextColor(Color.parseColor("#64748B"))
+                    setPadding(0, 5, 0, 0)
+                })
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(createRingbookSwitch(checked, changed))
+        }
+    }
+
+    private fun createStepperButton(symbol: String, onClick: () -> Unit): TextView {
+        return TextView(this).apply {
+            text = symbol
+            textSize = 18f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0F172A"))
+            gravity = Gravity.CENTER
+            setPadding(32, 14, 32, 14)
+            background = createCard("#F8FAFC", "#CBD5E1", 100f)
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun createPaywallFeatureTile(icon: String, bgHex: String, iconHex: String, label: String): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(30, 35, 30, 35)
+            background = createCard("#FFFFFF", "#E2E8F0", 32f)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            addView(createVectorIcon(icon, bgHex, iconHex, 95, true))
+            addView(TextView(this@MainActivity).apply {
+                text = label
+                textSize = 14f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#0F172A"))
+                gravity = Gravity.CENTER
+                setPadding(0, 16, 0, 0)
+            })
+        }
+    }
+
+    private fun createCard(bgHex: String, strokeHex: String, radius: Float): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(Color.parseColor(bgHex))
+            cornerRadius = radius
+            setStroke(2, Color.parseColor(strokeHex))
+        }
+    }
+}
