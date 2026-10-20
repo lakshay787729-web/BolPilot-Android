@@ -74,10 +74,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
     private val googleLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode != RESULT_OK || result.data == null) {
-            // Do not let an uncompleted sign-in enter the app; provide a useful next step.
+            // Preserve the mandatory login gate and expose the actual activity result for diagnosis.
             signedInName = null
             showPage("profile")
-            toast("Google sign-in was cancelled or blocked. If you selected an account, install an APK signed with a SHA-1 registered in Firebase.")
+            val detail = "resultCode=${result.resultCode}, dataPresent=${result.data != null}"
+            toast("Google sign-in did not return an account ($detail). If you did not cancel it, check Google Play Services and the APK signing SHA-1 in Firebase.")
             return@registerForActivityResult
         }
         try {
