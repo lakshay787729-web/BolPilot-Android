@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions for 24/7 Siri Background Voice OS, All Apps Launcher & Voice Lock -->
+    <!-- Core Permissions for 24/7 Siri Background Voice OS, Universal App Opener & Voice Lock -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -20,7 +20,7 @@
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
-    <!-- Android 11+ Package Visibility so BolPilot sees EVERY installed app & UPI app -->
+    <!-- Android 11+ Package Visibility for All Installed Apps & UPI Autopay Apps -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
