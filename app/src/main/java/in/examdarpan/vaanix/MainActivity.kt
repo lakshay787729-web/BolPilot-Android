@@ -565,73 +565,22 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // DIRECT UPI AUTOPAY LAUNCHER (Exact Ringbook Flow — No Visible Web Page!)
+    // RAZORPAY SUBSCRIPTION CHECKOUT
+    // Never treat a generic UPI payment result or a browser URL as proof of mandate.
+    // A trusted backend/webhook must verify the subscription before premium is enabled.
     // =========================================================================
-    @SuppressLint("SetJavaScriptEnabled")
     @Suppress("DEPRECATION")
     private fun startDirectRingbookStyleUpiAutopay() {
-        // 1. Show Ringbook's "Confirming your payment • Complete payment in your UPI app" bottom-sheet
-        showConfirmingPaymentBottomSheet()
-
-        // 2. Launch Selected UPI App (GPay / PhonePe / Paytm) directly with UPI Mandate URI
-        val targetPackage = when (selectedUpiApp) {
-            "GPay" -> "com.google.android.apps.nbu.paisa.user"
-            "PhonePe" -> "com.phonepe.app"
-            "Paytm" -> "net.one97.paytm"
-            else -> null
-        }
-
-        // Also spin up hidden background Razorpay bridge to extract/trigger live sub_Tq9W0sy8q51e64 intent
-        hiddenRazorpayWebView?.destroy()
-        hiddenRazorpayWebView = WebView(this).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                    val u = request?.url?.toString() ?: return false
-                    if (u.startsWith("upi://") || u.startsWith("phonepe://") ||
-                        u.startsWith("tez://") || u.startsWith("gpay://") ||
-                        u.startsWith("paytmmp://") || u.startsWith("intent://")) {
-                        try {
-                            val intent = if (u.startsWith("intent://")) {
-                                Intent.parseUri(u, Intent.URI_INTENT_SCHEME)
-                            } else {
-                                Intent(Intent.ACTION_VIEW, Uri.parse(u))
-                            }
-                            startActivityForResult(intent, RC_NATIVE_UPI_MANDATE)
-                        } catch (e: Exception) {}
-                        return true
-                    }
-                    if (u.contains("razorpay_payment_id=") || u.contains("status=authenticated") || u.contains("status=active")) {
-                        onUpiMandateVerifiedSuccess()
-                        return true
-                    }
-                    return false
-                }
-            }
-            loadUrl(RZP_SUBSCRIPTION_LINK)
-        }
-
-        // Immediately open the user's selected UPI app (GPay / PhonePe / Paytm) for ₹1 Mandate setup
-        val trId = "RZP" + System.currentTimeMillis()
-        val upiMandateUri = Uri.parse(
-            "upi://pay?pa=$MERCHANT_VPA&pn=${Uri.encode(RZP_MERCHANT_NAME)}&tr=$trId&tn=${Uri.encode("BolPilot Autopay $RZP_SUBSCRIPTION_ID")}&am=1.00&cu=INR"
-        )
-
+        val checkoutUri = Uri.parse(RZP_SUBSCRIPTION_LINK)
         try {
-            val upiIntent = Intent(Intent.ACTION_VIEW, upiMandateUri)
-            if (targetPackage != null && isPackageInstalled(targetPackage)) {
-                upiIntent.setPackage(targetPackage)
-            }
-            startActivityForResult(upiIntent, RC_NATIVE_UPI_MANDATE)
+            startActivity(Intent(Intent.ACTION_VIEW, checkoutUri))
+            Toast.makeText(
+                this,
+                "Complete the subscription on Razorpay. BolPilot will not unlock premium until the subscription is securely verified.",
+                Toast.LENGTH_LONG
+            ).show()
         } catch (e: Exception) {
-            try {
-                val chooser = Intent.createChooser(Intent(Intent.ACTION_VIEW, upiMandateUri), "Complete ₹1 Autopay in UPI App")
-                startActivityForResult(chooser, RC_NATIVE_UPI_MANDATE)
-            } catch (ex: Exception) {
-                confirmingSheetDialog?.dismiss()
-                Toast.makeText(this, "No UPI app found on device", Toast.LENGTH_LONG).show()
-            }
+            Toast.makeText(this, "Unable to open Razorpay checkout. Please try again.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -706,25 +655,18 @@ class MainActivity : Activity() {
     }
 
     private fun onUpiMandateVerifiedSuccess() {
+        // Deprecated local callback path: an app result or URL parameter is not server verification.
+        // Fail closed. Only a verified Razorpay webhook/backend may set pro_autopay_active.
         confirmingSheetDialog?.dismiss()
         hiddenRazorpayWebView?.destroy()
-        isMandateAuthorizedInSession = true
-        prefs.edit()
-            .putBoolean("pro_autopay_active", true)
-            .putString("rzp_sub_id", RZP_SUBSCRIPTION_ID)
-            .putString("rzp_plan_id", RZP_PLAN_ID)
-            .putString("invoice_date", SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date()))
-            .apply()
-
-        Toast.makeText(this, "₹1 UPI AutoPay Mandate Verified!", Toast.LENGTH_LONG).show()
-        if (!prefs.getBoolean("user_logged_in", false)) {
-            showRingbookSignInScreen()
-        } else {
-            val email = prefs.getString("user_email", "") ?: ""
-            prefs.edit().putString("subscribed_email", email).apply()
-            safeStartAssistantService()
-            showRingbookDashboard()
-        }
+        isMandateAuthorizedInSession = false
+        prefs.edit().putBoolean("pro_autopay_active", false).apply()
+        Toast.makeText(
+            this,
+            "Payment return received, but subscription status cannot be verified yet. Premium stays locked until secure verification is configured.",
+            Toast.LENGTH_LONG
+        ).show()
+        showRingbookTrialPaywall()
     }
 
     // =========================================================================
