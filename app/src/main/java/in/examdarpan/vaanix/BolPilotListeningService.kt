@@ -6,6 +6,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.app.admin.DevicePolicyManager
+import android.Manifest
+import android.content.pm.PackageManager
+import android.hardware.camera2.CameraManager
+import android.os.BatteryManager
+import android.text.format.DateFormat
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -173,7 +178,22 @@ class BolPilotListeningService : Service() {
                 q.contains("फोन लॉक") || q.contains("मोबाइल लॉक") || q.contains("स्क्रीन लॉक") -> lockScreen()
             q.contains("wake screen") || q.contains("turn screen on") || q.contains("unlock phone") ||
                 q.contains("unlock screen") || q.contains("फोन अनलॉक") || q.contains("स्क्रीन चालू") -> wakeScreenForUnlock()
-            q.contains("open settings") || q.contains("सेटिंग खोलो") -> {
+            q.contains("flashlight on") || q.contains("torch on") || q.contains("टॉर्च चालू") || q.contains("फ्लैशलाइट चालू") || q.contains("लाइट चालू") -> setFlashlight(true)
+            q.contains("flashlight off") || q.contains("torch off") || q.contains("टॉर्च बंद") || q.contains("फ्लैशलाइट बंद") || q.contains("लाइट बंद") -> setFlashlight(false)
+            q.contains("what time") || q.contains("time is it") || q.contains("समय क्या") || q.contains("कितने बजे") -> {
+                val time = java.text.SimpleDateFormat("h:mm a", Locale.getDefault()).format(java.util.Date())
+                updateNotification("Time: $time")
+            }
+            q.contains("today's date") || q.contains("what is the date") || q.contains("आज की तारीख") || q.contains("आज कौन सी तारीख") -> {
+                val date = java.text.SimpleDateFormat("d MMMM yyyy", Locale.getDefault()).format(java.util.Date())
+                updateNotification("Date: $date")
+            }
+            q.contains("battery") || q.contains("बैटरी") -> {
+                val battery = getSystemService(BATTERY_SERVICE) as BatteryManager
+                val level = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                updateNotification("Battery: $level percent")
+            }
+            q.contains("open settings") || q.contains("settings kholo") || q.contains("सेटिंग खोलो") || q.contains("सेटिंग्स खोलो") -> {
                 runCatching { startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             }
         }
@@ -196,6 +216,27 @@ class BolPilotListeningService : Service() {
             .setClassName(match.activityInfo.packageName, match.activityInfo.name)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { startActivity(launch) }
+    }
+
+    private fun setFlashlight(enabled: Boolean) {
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            updateNotification("Flashlight needs Camera permission. Allow it in Android Settings for BolPilot.")
+            return
+        }
+        try {
+            val cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
+            val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+                cameraManager.getCameraCharacteristics(id).get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            }
+            if (cameraId == null) {
+                updateNotification("This device has no supported flashlight.")
+                return
+            }
+            cameraManager.setTorchMode(cameraId, enabled)
+            updateNotification(if (enabled) "Flashlight turned on." else "Flashlight turned off.")
+        } catch (_: Exception) {
+            updateNotification("Could not control flashlight. Check Camera permission and device support.")
+        }
     }
 
     private fun wakeScreenForUnlock() {
