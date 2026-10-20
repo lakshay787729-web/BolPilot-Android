@@ -24,6 +24,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
 import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import java.text.SimpleDateFormat
@@ -767,49 +769,35 @@ class MainActivity : Activity() {
         mainContainer.addView(root)
     }
 
-    // Exact Ringbook "Signing in..." Loader + Modern Bottom-Sheet Google Account Chooser!
+    // Start the real Google Sign-In flow and authenticate the account with Firebase.
     private fun showRingbookModernGoogleBottomSheet() {
-        val signingInDialog = Dialog(this).apply {
-            requestWindowFeature(Window.FEATURE_NO_TITLE)
-            setCancelable(false)
-            val box = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                background = createCard("#FFFFFF", "#E2E8F0", 42f)
-                setPadding(80, 65, 80, 65)
-                addView(ProgressBar(this@MainActivity))
-                addView(TextView(this@MainActivity).apply {
-                    text = "Signing in..."
-                    textSize = 15f
-                    setTypeface(null, Typeface.BOLD)
-                    setTextColor(Color.parseColor("#0F172A"))
-                    setPadding(0, 28, 0, 0)
-                })
-            }
-            setContentView(box)
-            window?.setBackgroundDrawableResource(android.R.color.transparent)
-            show()
+        val webClientIdRes = resources.getIdentifier("default_web_client_id", "string", packageName)
+        if (webClientIdRes == 0) {
+            AlertDialog.Builder(this)
+                .setTitle("Google Sign-In setup required")
+                .setMessage("BolPilot is missing its Firebase Google OAuth configuration. Add the correct google-services.json for project vaanix-23889, enable Google sign-in in Firebase Authentication, and register this app's SHA-1/SHA-256 fingerprints.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
         }
 
-        Handler(Looper.getMainLooper()).postDelayed({
-            signingInDialog.dismiss()
-            // Try official Google Sign-In bottom sheet first, or open Ringbook-styled Account Bottom-Sheet
+        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail()
+            .requestProfile()
+            .requestIdToken(getString(webClientIdRes))
+            .build()
+        val client = GoogleSignIn.getClient(this, gso)
+        client.signOut().addOnCompleteListener {
             try {
-                val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                    .requestEmail()
-                    .requestProfile()
-                    .build()
-                val client = GoogleSignIn.getClient(this, gso)
-                client.signOut().addOnCompleteListener {
-                    startActivityForResult(client.signInIntent, RC_GOOGLE_SIGN_IN)
-                }
+                startActivityForResult(client.signInIntent, RC_GOOGLE_SIGN_IN)
             } catch (e: Exception) {
-                openCustomGoogleAccountBottomSheet()
+                Toast.makeText(this, "Could not open Google Sign-In: ${e.localizedMessage ?: "Unknown error"}", Toast.LENGTH_LONG).show()
             }
-        }, 650)
+        }
     }
 
     // Modern Ringbook-style Bottom Sheet with Colored Avatar Circles, Display Name & Email
+
     private fun openCustomGoogleAccountBottomSheet() {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -950,25 +938,47 @@ class MainActivity : Activity() {
         }
 
         if (requestCode == RC_GOOGLE_SIGN_IN) {
+            if (resultCode != Activity.RESULT_OK || data == null) {
+                Toast.makeText(this, "Google Sign-In was cancelled or failed. Check Firebase OAuth and SHA fingerprints if it keeps failing.", Toast.LENGTH_LONG).show()
+                return
+            }
             try {
-                val task = GoogleSignIn.getSignedInAccountFromIntent(data)
-                val acct = task.getResult(ApiException::class.java)
-                val email = acct?.email ?: ""
-                val name = acct?.displayName ?: deriveNameFromEmail(email)
-                if (email.isNotEmpty()) {
-                    completeGoogleSignInVerification(name, email)
-                } else {
-                    openCustomGoogleAccountBottomSheet()
+                val account = GoogleSignIn.getSignedInAccountFromIntent(data)
+                    .getResult(ApiException::class.java)
+                val idToken = account.idToken
+                if (idToken.isNullOrBlank()) {
+                    Toast.makeText(this, "Google did not return an ID token. Check the Firebase Web client ID and SHA fingerprints.", Toast.LENGTH_LONG).show()
+                    return
                 }
+                val credential = GoogleAuthProvider.getCredential(idToken, null)
+                FirebaseAuth.getInstance().signInWithCredential(credential)
+                    .addOnCompleteListener(this) { task ->
+                        if (task.isSuccessful) {
+                            val user = FirebaseAuth.getInstance().currentUser
+                            val email = user?.email.orEmpty()
+                            if (email.isNotBlank()) {
+                                completeGoogleSignInVerification(
+                                    user?.displayName ?: deriveNameFromEmail(email),
+                                    email
+                                )
+                            } else {
+                                Toast.makeText(this, "Google account returned no email address.", Toast.LENGTH_LONG).show()
+                            }
+                        } else {
+                            Toast.makeText(
+                                this,
+                                "Firebase sign-in failed: ${task.exception?.localizedMessage ?: "Check Firebase Authentication settings."}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+            } catch (e: ApiException) {
+                Toast.makeText(this, "Google Sign-In error code ${e.statusCode}: ${e.localizedMessage ?: "Check OAuth configuration."}", Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
-                // If GitHub unsigned APK lacks SHA-1, seamlessly show Ringbook-style Google Account Bottom-Sheet!
-                openCustomGoogleAccountBottomSheet()
+                Toast.makeText(this, "Sign-in failed: ${e.localizedMessage ?: "Unknown error"}", Toast.LENGTH_LONG).show()
             }
         } else if (requestCode == RC_ACCOUNT_PICKER) {
-            val email = data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME) ?: ""
-            if (email.isNotEmpty()) {
-                completeGoogleSignInVerification(deriveNameFromEmail(email), email)
-            }
+            Toast.makeText(this, "Please use Continue with Google so Firebase can securely verify your account.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -983,11 +993,7 @@ class MainActivity : Activity() {
             .setPositiveButton("Continue") { d, _ ->
                 val em = input.text.toString().trim()
                 d.dismiss()
-                if (em.contains("@")) {
-                    completeGoogleSignInVerification(deriveNameFromEmail(em), em)
-                } else {
-                    Toast.makeText(this, "Please enter a valid email address", Toast.LENGTH_SHORT).show()
-                }
+                Toast.makeText(this, "Email-only sign-in is not enabled. Please use Continue with Google for secure authentication.", Toast.LENGTH_LONG).show()
             }
             .setNegativeButton("Cancel", null)
             .show()
