@@ -223,10 +223,12 @@ class BolPilotListeningService : Service() {
     private fun speakAndNotify(spoken: String, status: String) {
         updateNotification(status)
         runCatching {
-            val tts = android.speech.tts.TextToSpeech(this) { result ->
+            android.speech.tts.TextToSpeech(this) { result ->
                 if (result == android.speech.tts.TextToSpeech.SUCCESS) {
-                    // Prefer an Indian Hindi voice when available; system fallback remains usable.
-                    val engine = this.ttsEngine
+                    // Use Hindi (India) when installed; the TTS engine chooses a supported fallback otherwise.
+                    val engine = android.speech.tts.TextToSpeech(this, null)
+                    engine.language = Locale("hi", "IN")
+                    engine.speak(spoken, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "bolpilot-voice-response")
                 }
             }
         }
