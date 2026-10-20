@@ -151,6 +151,7 @@ class MainActivity : Activity() {
             .putBoolean("pro_autopay_active", false)
             .apply()
         Toast.makeText(this, "Guest mode enabled. Payment and login are skipped for testing.", Toast.LENGTH_LONG).show()
+        if (prefs.getBoolean("master_listening_on", true)) safeStartAssistantService()
         showRingbookDashboard()
     }
 
