@@ -84,7 +84,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 if (taskResult.isSuccessful) {
                     signedInName = auth?.currentUser?.displayName ?: account.displayName ?: account.email
                     toast("Signed in successfully")
-                    showPage("profile")
+                    showPage("home")
                 } else toast("Firebase sign-in failed: ${taskResult.exception?.localizedMessage ?: "Unknown error"}")
             } ?: toast("Firebase is not configured yet")
         } catch (e: Exception) {
@@ -103,7 +103,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (FirebaseApp.getApps(this).isNotEmpty()) auth = FirebaseAuth.getInstance()
         signedInName = auth?.currentUser?.displayName ?: auth?.currentUser?.email
         buildShell()
-        showPage("home")
+        // Require an account on first launch; Firebase restores an existing session automatically.
+        showPage(if (auth?.currentUser == null) "profile" else "home")
     }
 
     override fun onInit(status: Int) {
@@ -312,7 +313,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         col.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) })
         if (auth?.currentUser == null) {
             col.addView(button("Continue with Google", white, navy) { beginGoogleSignIn() }, LinearLayout.LayoutParams(-1, dp(54)))
-            col.addView(text("To enable Google sign-in, add your own Firebase google-services.json and configure the Web Client ID. This project does not contain your private Firebase configuration.", 12f, muted).apply { setPadding(dp(4), dp(12), dp(4), dp(12)) })
+            col.addView(text("Google sign-in uses this app’s Firebase configuration. If sign-in fails, check the SHA fingerprint and Google provider settings in Firebase Console.", 12f, muted).apply { setPadding(dp(4), dp(12), dp(4), dp(12)) })
         } else {
             col.addView(button("Sign out", 0xFF3B1B34.toInt(), red) {
                 auth?.signOut(); GoogleSignIn.getClient(this, GoogleSignInOptions.DEFAULT_SIGN_IN).signOut()
@@ -332,6 +333,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         c.addView(text("Your voice, upgraded", 19f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(6)) })
         c.addView(text("Premium plans must be configured in Google Play Console before real prices, trials, and purchases can be shown. No fake purchase or trial is enabled in this build.", 14f, muted).apply { gravity = Gravity.CENTER })
         col.addView(c, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+        col.addView(button("Try demo checkout (no payment)", 0xFF163F65.toInt(), cyan) {
+            AlertDialog.Builder(this)
+                .setTitle("Demo payment gateway")
+                .setMessage("This is only a UI preview. No money will be charged, no subscription will start, and no trial is activated. A real payment provider and server-side verification must be integrated before launch.")
+                .setPositiveButton("Got it", null)
+                .show()
+        }, LinearLayout.LayoutParams(-1, dp(52)).apply { bottomMargin = dp(12) })
         listOf("More voice workflows", "Preference sync across devices", "Premium command packs").forEach { item ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; background = rounded(panel, 14); setPadding(dp(14), dp(12), dp(14), dp(12)) }
             row.addView(text("✓", 18f, cyan, true), LinearLayout.LayoutParams(dp(28), -2))
