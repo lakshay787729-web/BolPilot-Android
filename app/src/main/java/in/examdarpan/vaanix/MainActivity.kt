@@ -1646,7 +1646,4 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun createPaywallFeatureTile(title: String, subtitle: String): View {
-        return createSubRow("✓", title, subtitle) { }
-    }
 }
