@@ -37,26 +37,26 @@ class MainActivity : Activity() {
     private var setupRecognizer: SpeechRecognizer? = null
     private var liveHeardLabel: TextView? = null
     private var soundVisualizerBar: ProgressBar? = null
-    private var soundLevelNumberText: TextView? = null
 
-    private var hiddenMandateWebView: WebView? = null
-    private var confirmingPaymentDialog: Dialog? = null
-    private var mandateLaunchTimestamp = 0L
+    private var confirmingSheetDialog: Dialog? = null
+    private var hiddenRazorpayWebView: WebView? = null
+    private var isMandateAuthorizedInSession = false
 
     private val RC_GOOGLE_SIGN_IN = 9001
     private val RC_ACCOUNT_PICKER = 9002
-    private val RC_NATIVE_UPI_MANDATE = 9009
+    private val RC_NATIVE_UPI_MANDATE = 9005
 
     // =========================================================================
     // ENCODE TECHNOLOGIES — LIVE RAZORPAY SUBSCRIPTION DETAILS
     // =========================================================================
-    private val RZP_PLAN_NAME = "ENCODE TECHNOLOGIES"
+    private val RZP_MERCHANT_NAME = "ENCODE TECHNOLOGIES"
     private val RZP_PLAN_ID = "plan_Tq9Re1je5QlhiE"
     private val RZP_SUBSCRIPTION_ID = "sub_Tq9W0sy8q51e64"
     private val RZP_SUBSCRIPTION_LINK = "https://rzp.io/rzp/ni1yHV1N"
+    private val MERCHANT_VPA = "encodetechnologies.rzp@axisbank"
 
     private var selectedUpiApp = "GPay"
-    private var postLoginAction = "START_TRIAL"
+    private var signInFlowMode = "AFTER_TRIAL_PAYMENT" // "AFTER_TRIAL_PAYMENT" or "EXISTING_SUBSCRIBER"
 
     private val voiceReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -68,7 +68,6 @@ class MainActivity : Activity() {
                 "BOLPILOT_SOUND_LEVEL" -> {
                     val level = intent.getIntExtra("LEVEL", 0)
                     soundVisualizerBar?.progress = level
-                    soundLevelNumberText?.text = "$level"
                 }
             }
         }
@@ -111,6 +110,7 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        // Strict Paywall Protection: Cannot bypass paywall without active subscription
         if (!prefs.getBoolean("pro_autopay_active", false)) {
             if (currentScreen == "SIGN_IN" || currentScreen == "LEGAL_PUBLIC") {
                 showRingbookTrialPaywall()
@@ -128,7 +128,7 @@ class MainActivity : Activity() {
             "CALIBRATE" -> showClapToFindSettingsScreen()
             "VOICE_LOCK_STEP" -> showVoiceLockIntroScreen()
             "ACCOUNT_SETTINGS", "LEGAL_PAGE", "CONTACT_US" -> showProfileScreen()
-            "PAYMENT_INVOICE" -> showAccountSettingsScreen()
+            "INVOICE_PAGE" -> showAccountSettingsScreen()
             else -> moveTaskToBack(true)
         }
     }
@@ -181,14 +181,13 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // CUSTOM CANVAS VECTOR ICON ENGINE (100% Zero Emojis — Exact Ringbook Style!)
+    // CUSTOM MATHEMATICAL VECTOR ICON ENGINE (Zero Emojis Across Entire App!)
     // =========================================================================
     private fun createVectorIcon(
         type: String,
         bgHex: String = "#F1F5F9",
-        strokeHex: String = "#E2E8F0",
-        fgHex: String = "#0F172A",
-        sizePx: Int = 112,
+        iconHex: String = "#0F172A",
+        sizePx: Int = 110,
         isCircle: Boolean = true
     ): View {
         return object : View(this) {
@@ -199,100 +198,98 @@ class MainActivity : Activity() {
                 val h = height.toFloat()
                 val cx = w / 2f
                 val cy = h / 2f
-                val rad = if (isCircle) w / 2f else 32f
 
                 paint.style = Paint.Style.FILL
                 paint.color = Color.parseColor(bgHex)
-                canvas.drawRoundRect(0f, 0f, w, h, rad, rad, paint)
-
-                if (strokeHex != bgHex) {
-                    paint.style = Paint.Style.STROKE
-                    paint.strokeWidth = 2.2f
-                    paint.color = Color.parseColor(strokeHex)
-                    canvas.drawRoundRect(1.5f, 1.5f, w - 1.5f, h - 1.5f, rad, rad, paint)
+                if (isCircle) {
+                    canvas.drawCircle(cx, cy, cx, paint)
+                } else {
+                    canvas.drawRoundRect(0f, 0f, w, h, 32f, 32f, paint)
                 }
 
-                paint.color = Color.parseColor(fgHex)
-                paint.strokeWidth = 4.6f
+                paint.color = Color.parseColor(iconHex)
+                paint.strokeWidth = 4.8f
                 paint.strokeCap = Paint.Cap.ROUND
                 paint.strokeJoin = Paint.Join.ROUND
 
                 when (type) {
-                    "MIC" -> {
-                        paint.style = Paint.Style.STROKE
-                        canvas.drawRoundRect(cx - 9f, cy - 20f, cx + 9f, cy + 3f, 9f, 9f, paint)
-                        canvas.drawArc(cx - 17f, cy - 13f, cx + 17f, cy + 13f, 0f, 180f, false, paint)
-                        canvas.drawLine(cx, cy + 13f, cx, cy + 22f, paint)
-                        canvas.drawLine(cx - 10f, cy + 22f, cx + 10f, cy + 22f, paint)
-                    }
-                    "WAVE" -> {
-                        paint.style = Paint.Style.STROKE
-                        canvas.drawLine(cx - 18f, cy - 6f, cx - 18f, cy + 6f, paint)
-                        canvas.drawLine(cx - 9f, cy - 15f, cx - 9f, cy + 15f, paint)
-                        canvas.drawLine(cx, cy - 22f, cx, cy + 22f, paint)
-                        canvas.drawLine(cx + 9f, cy - 15f, cx + 9f, cy + 15f, paint)
-                        canvas.drawLine(cx + 18f, cy - 6f, cx + 18f, cy + 6f, paint)
-                    }
-                    "LOCK" -> {
-                        paint.style = Paint.Style.STROKE
-                        canvas.drawRoundRect(cx - 15f, cy - 3f, cx + 15f, cy + 20f, 6f, 6f, paint)
-                        canvas.drawArc(cx - 10f, cy - 21f, cx + 10f, cy + 3f, 180f, 180f, false, paint)
+                    "BELL_WAVE" -> {
                         paint.style = Paint.Style.FILL
-                        canvas.drawCircle(cx, cy + 8f, 3.5f, paint)
-                    }
-                    "UNLOCK" -> {
-                        paint.style = Paint.Style.STROKE
-                        canvas.drawRoundRect(cx - 15f, cy - 3f, cx + 15f, cy + 20f, 6f, 6f, paint)
-                        canvas.drawArc(cx - 10f, cy - 21f, cx + 10f, cy + 3f, 180f, 135f, false, paint)
-                        paint.style = Paint.Style.FILL
-                        canvas.drawCircle(cx, cy + 8f, 3.5f, paint)
-                    }
-                    "SLIDERS" -> {
-                        paint.style = Paint.Style.STROKE
-                        canvas.drawLine(cx - 16f, cy - 10f, cx + 16f, cy - 10f, paint)
-                        canvas.drawLine(cx - 16f, cy + 10f, cx + 16f, cy + 10f, paint)
-                        paint.style = Paint.Style.FILL
-                        canvas.drawCircle(cx - 5f, cy - 10f, 6f, paint)
-                        canvas.drawCircle(cx + 6f, cy + 10f, 6f, paint)
-                    }
-                    "BATTERY" -> {
-                        paint.style = Paint.Style.STROKE
-                        canvas.drawRoundRect(cx - 11f, cy - 16f, cx + 11f, cy + 18f, 4f, 4f, paint)
-                        paint.style = Paint.Style.FILL
-                        canvas.drawRect(cx - 5f, cy - 21f, cx + 5f, cy - 16f, paint)
-                        canvas.drawRect(cx - 6f, cy + 2f, cx + 6f, cy + 13f, paint)
-                    }
-                    "SHIELD" -> {
-                        paint.style = Paint.Style.STROKE
                         val p = Path().apply {
-                            moveTo(cx, cy - 20f)
-                            lineTo(cx + 16f, cy - 12f)
-                            lineTo(cx + 13f, cy + 7f)
-                            lineTo(cx, cy + 20f)
-                            lineTo(cx - 13f, cy + 7f)
-                            lineTo(cx - 16f, cy - 12f)
+                            moveTo(cx, cy - 18f)
+                            cubicTo(cx - 14f, cy - 18f, cx - 15f, cy - 2f, cx - 15f, cy + 9f)
+                            lineTo(cx - 19f, cy + 14f)
+                            lineTo(cx + 19f, cy + 14f)
+                            lineTo(cx + 15f, cy + 9f)
+                            cubicTo(cx + 15f, cy - 2f, cx + 14f, cy - 18f, cx, cy - 18f)
                             close()
                         }
                         canvas.drawPath(p, paint)
+                        canvas.drawCircle(cx, cy + 19f, 4.5f, paint)
+                        paint.style = Paint.Style.STROKE
+                        canvas.drawArc(cx - 25f, cy - 16f, cx + 25f, cy + 15f, 200f, 35f, false, paint)
+                        canvas.drawArc(cx - 25f, cy - 16f, cx + 25f, cy + 15f, 305f, 35f, false, paint)
+                    }
+                    "MIC" -> {
+                        paint.style = Paint.Style.STROKE
+                        canvas.drawRoundRect(cx - 8f, cy - 18f, cx + 8f, cy + 3f, 8f, 8f, paint)
+                        canvas.drawArc(cx - 16f, cy - 12f, cx + 16f, cy + 12f, 0f, 180f, false, paint)
+                        canvas.drawLine(cx, cy + 12f, cx, cy + 20f, paint)
+                        canvas.drawLine(cx - 9f, cy + 20f, cx + 9f, cy + 20f, paint)
+                    }
+                    "WAVE" -> {
+                        paint.style = Paint.Style.STROKE
+                        canvas.drawLine(cx - 16f, cy - 6f, cx - 16f, cy + 6f, paint)
+                        canvas.drawLine(cx - 8f, cy - 14f, cx - 8f, cy + 14f, paint)
+                        canvas.drawLine(cx, cy - 20f, cx, cy + 20f, paint)
+                        canvas.drawLine(cx + 8f, cy - 14f, cx + 8f, cy + 14f, paint)
+                        canvas.drawLine(cx + 16f, cy - 6f, cx + 16f, cy + 6f, paint)
+                    }
+                    "LOCK" -> {
+                        paint.style = Paint.Style.STROKE
+                        canvas.drawRoundRect(cx - 14f, cy - 3f, cx + 14f, cy + 18f, 6f, 6f, paint)
+                        canvas.drawArc(cx - 9f, cy - 19f, cx + 9f, cy + 3f, 180f, 180f, false, paint)
+                        paint.style = Paint.Style.FILL
+                        canvas.drawCircle(cx, cy + 7f, 3f, paint)
+                    }
+                    "SLIDERS" -> {
+                        paint.style = Paint.Style.STROKE
+                        canvas.drawLine(cx - 15f, cy - 10f, cx + 15f, cy - 10f, paint)
+                        canvas.drawLine(cx - 15f, cy + 10f, cx + 15f, cy + 10f, paint)
+                        paint.style = Paint.Style.FILL
+                        canvas.drawCircle(cx - 5f, cy - 10f, 5.5f, paint)
+                        canvas.drawCircle(cx + 6f, cy + 10f, 5.5f, paint)
                     }
                     "USER" -> {
                         paint.style = Paint.Style.STROKE
                         canvas.drawCircle(cx, cy - 8f, 9f, paint)
-                        canvas.drawArc(cx - 17f, cy + 4f, cx + 17f, cy + 30f, 180f, 180f, false, paint)
+                        canvas.drawArc(cx - 17f, cy + 4f, cx + 17f, cy + 28f, 180f, 180f, false, paint)
                     }
-                    "BELL" -> {
+                    "SHIELD" -> {
                         paint.style = Paint.Style.STROKE
                         val p = Path().apply {
-                            moveTo(cx, cy - 18f)
-                            cubicTo(cx - 14f, cy - 18f, cx - 15f, cy - 2f, cx - 15f, cy + 10f)
-                            lineTo(cx - 19f, cy + 14f)
-                            lineTo(cx + 19f, cy + 14f)
-                            lineTo(cx + 15f, cy + 10f)
-                            cubicTo(cx + 15f, cy - 2f, cx + 14f, cy - 18f, cx, cy - 18f)
+                            moveTo(cx, cy - 19f)
+                            lineTo(cx + 15f, cy - 12f)
+                            lineTo(cx + 12f, cy + 7f)
+                            lineTo(cx, cy + 19f)
+                            lineTo(cx - 12f, cy + 7f)
+                            lineTo(cx - 15f, cy - 12f)
+                            close()
                         }
                         canvas.drawPath(p, paint)
-                        paint.style = Paint.Style.FILL
-                        canvas.drawCircle(cx, cy + 19f, 4f, paint)
+                    }
+                    "DOC" -> {
+                        paint.style = Paint.Style.STROKE
+                        canvas.drawRoundRect(cx - 13f, cy - 18f, cx + 13f, cy + 18f, 4f, 4f, paint)
+                        canvas.drawLine(cx - 7f, cy - 7f, cx + 7f, cy - 7f, paint)
+                        canvas.drawLine(cx - 7f, cy + 1f, cx + 7f, cy + 1f, paint)
+                        canvas.drawLine(cx - 7f, cy + 9f, cx + 3f, cy + 9f, paint)
+                    }
+                    "HEADSET" -> {
+                        paint.style = Paint.Style.STROKE
+                        canvas.drawArc(cx - 16f, cy - 17f, cx + 16f, cy + 15f, 180f, 180f, false, paint)
+                        canvas.drawRoundRect(cx - 18f, cy - 3f, cx - 11f, cy + 12f, 4f, 4f, paint)
+                        canvas.drawRoundRect(cx + 11f, cy - 3f, cx + 18f, cy + 12f, 4f, 4f, paint)
                     }
                     "STAR" -> {
                         paint.style = Paint.Style.FILL
@@ -300,44 +297,36 @@ class MainActivity : Activity() {
                         paint.style = Paint.Style.STROKE
                         canvas.drawCircle(cx, cy, 16f, paint)
                     }
-                    "DOC" -> {
+                    "BATTERY" -> {
                         paint.style = Paint.Style.STROKE
-                        canvas.drawRoundRect(cx - 14f, cy - 18f, cx + 14f, cy + 18f, 4f, 4f, paint)
-                        canvas.drawLine(cx - 7f, cy - 6f, cx + 7f, cy - 6f, paint)
-                        canvas.drawLine(cx - 7f, cy + 4f, cx + 7f, cy + 4f, paint)
+                        canvas.drawRoundRect(cx - 10f, cy - 15f, cx + 10f, cy + 17f, 4f, 4f, paint)
+                        paint.style = Paint.Style.FILL
+                        canvas.drawRect(cx - 5f, cy - 20f, cx + 5f, cy - 15f, paint)
                     }
-                    "RECEIPT" -> {
+                    "PIN" -> {
                         paint.style = Paint.Style.STROKE
-                        canvas.drawRoundRect(cx - 14f, cy - 18f, cx + 14f, cy + 18f, 4f, 4f, paint)
-                        canvas.drawLine(cx - 7f, cy - 8f, cx + 7f, cy - 8f, paint)
-                        canvas.drawLine(cx - 7f, cy, cx + 7f, cy, paint)
-                        canvas.drawLine(cx - 7f, cy + 8f, cx + 3f, cy + 8f, paint)
-                    }
-                    "HEADSET" -> {
-                        paint.style = Paint.Style.STROKE
-                        canvas.drawArc(cx - 16f, cy - 16f, cx + 16f, cy + 14f, 180f, 180f, false, paint)
-                        canvas.drawRoundRect(cx - 18f, cy - 2f, cx - 10f, cy + 12f, 4f, 4f, paint)
-                        canvas.drawRoundRect(cx + 10f, cy - 2f, cx + 18f, cy + 12f, 4f, 4f, paint)
+                        canvas.drawRoundRect(cx - 15f, cy - 11f, cx + 15f, cy + 11f, 4f, 4f, paint)
+                        paint.style = Paint.Style.FILL
+                        canvas.drawCircle(cx - 7f, cy, 2.5f, paint)
+                        canvas.drawCircle(cx, cy, 2.5f, paint)
+                        canvas.drawCircle(cx + 7f, cy, 2.5f, paint)
                     }
                     "MAIL" -> {
                         paint.style = Paint.Style.STROKE
-                        canvas.drawRoundRect(cx - 17f, cy - 12f, cx + 17f, cy + 12f, 4f, 4f, paint)
+                        canvas.drawRoundRect(cx - 16f, cy - 11f, cx + 16f, cy + 11f, 4f, 4f, paint)
                         canvas.drawLine(cx - 15f, cy - 10f, cx, cy + 2f, paint)
                         canvas.drawLine(cx + 15f, cy - 10f, cx, cy + 2f, paint)
                     }
                     "PHONE" -> {
                         paint.style = Paint.Style.STROKE
-                        canvas.drawRoundRect(cx - 11f, cy - 18f, cx + 11f, cy + 18f, 4f, 4f, paint)
+                        canvas.drawRoundRect(cx - 11f, cy - 17f, cx + 11f, cy + 17f, 5f, 5f, paint)
                         paint.style = Paint.Style.FILL
-                        canvas.drawCircle(cx, cy + 12f, 2.5f, paint)
+                        canvas.drawCircle(cx, cy + 11f, 2.5f, paint)
                     }
-                    "PIN_LOC" -> {
+                    "LOCATION" -> {
                         paint.style = Paint.Style.STROKE
-                        canvas.drawCircle(cx, cy - 4f, 10f, paint)
-                        paint.style = Paint.Style.FILL
-                        canvas.drawCircle(cx, cy - 4f, 3.5f, paint)
-                        paint.style = Paint.Style.STROKE
-                        canvas.drawLine(cx, cy + 6f, cx, cy + 19f, paint)
+                        canvas.drawCircle(cx, cy - 4f, 6f, paint)
+                        canvas.drawArc(cx - 14f, cy - 18f, cx + 14f, cy + 18f, 150f, 240f, false, paint)
                     }
                     "CLOCK" -> {
                         paint.style = Paint.Style.STROKE
@@ -345,31 +334,11 @@ class MainActivity : Activity() {
                         canvas.drawLine(cx, cy, cx, cy - 9f, paint)
                         canvas.drawLine(cx, cy, cx + 7f, cy, paint)
                     }
-                    "KEYPAD" -> {
-                        paint.style = Paint.Style.STROKE
-                        canvas.drawRoundRect(cx - 16f, cy - 12f, cx + 16f, cy + 12f, 4f, 4f, paint)
-                        paint.style = Paint.Style.FILL
-                        canvas.drawCircle(cx - 7f, cy, 2.5f, paint)
-                        canvas.drawCircle(cx, cy, 2.5f, paint)
-                        canvas.drawCircle(cx + 7f, cy, 2.5f, paint)
-                    }
-                    "BOLT" -> {
-                        paint.style = Paint.Style.STROKE
-                        val p = Path().apply {
-                            moveTo(cx + 3f, cy - 18f)
-                            lineTo(cx - 11f, cy + 2f)
-                            lineTo(cx + 1f, cy + 2f)
-                            lineTo(cx - 3f, cy + 18f)
-                            lineTo(cx + 11f, cy - 2f)
-                            lineTo(cx - 1f, cy - 2f)
-                            close()
-                        }
-                        canvas.drawPath(p, paint)
-                    }
                     "TRASH" -> {
                         paint.style = Paint.Style.STROKE
-                        canvas.drawLine(cx - 15f, cy - 11f, cx + 15f, cy - 11f, paint)
-                        canvas.drawRoundRect(cx - 11f, cy - 11f, cx + 11f, cy + 17f, 3f, 3f, paint)
+                        canvas.drawRect(cx - 11f, cy - 9f, cx + 11f, cy + 16f, paint)
+                        canvas.drawLine(cx - 15f, cy - 9f, cx + 15f, cy - 9f, paint)
+                        canvas.drawLine(cx - 5f, cy - 14f, cx + 5f, cy - 14f, paint)
                     }
                 }
             }
@@ -379,7 +348,7 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // SCREEN 1: RINGBOOK-STYLE ₹1 TRIAL PAYWALL SCREEN (Zero Emojis!)
+    // SCREEN 1: EXACT RINGBOOK ₹1 TRIAL PAYWALL SCREEN (Zero Emojis!)
     // =========================================================================
     private fun showRingbookTrialPaywall() {
         currentScreen = "TRIAL_PAYWALL"
@@ -395,53 +364,53 @@ class MainActivity : Activity() {
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(45, 70, 45, 30)
+            setPadding(45, 65, 45, 30)
             gravity = Gravity.CENTER_HORIZONTAL
         }
 
-        // Top Dark Hero Container (Exact Ringbook Look)
+        // Top Dark Hero Preview Container (Matches Ringbook)
         val darkHero = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            background = createCard("#080D1A", "#1E293B", 48f)
-            setPadding(50, 95, 50, 95)
+            background = createCard("#080D1A", "#080D1A", 48f)
+            setPadding(50, 95, 50, 105)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         }
-        darkHero.addView(createVectorIcon("MIC", "#1E293B", "#38BDF8", "#38BDF8", 130))
+        darkHero.addView(createVectorIcon("WAVE", "#1E293B", "#38BDF8", 130, true))
         darkHero.addView(TextView(this).apply {
             text = "BolPilot Hands-Free Siri OS"
-            textSize = 20f
+            textSize = 19.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             setPadding(0, 24, 0, 6)
         })
         darkHero.addView(TextView(this).apply {
-            text = "Open any app by voice  •  Voice Lock  •  Clap Finder"
-            textSize = 13f
+            text = "Open any app by voice  •  Voice Lock  •  Clap to Find"
+            textSize = 12.5f
             setTextColor(Color.parseColor("#94A3B8"))
             gravity = Gravity.CENTER
         })
         content.addView(darkHero)
 
-        // Floating White Headline Card
+        // Floating White Overlapping Card with Blue Vector Bell Icon at Top
         val titleCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            background = createCard("#FFFFFF", "#E2E8F0", 42f)
-            setPadding(50, 45, 50, 45)
+            background = createCard("#FFFFFF", "#E2E8F0", 44f)
+            setPadding(50, 42, 50, 45)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = -38
+                topMargin = -55
             }
         }
-        titleCard.addView(createVectorIcon("BELL", "#E0F2FE", "#BAE6FD", "#0284C7", 88))
+        titleCard.addView(createVectorIcon("BELL_WAVE", "#E0F2FE", "#0284C7", 100, true))
         titleCard.addView(TextView(this).apply {
             text = "Secure your phone for\njust ₹1"
-            textSize = 25f
+            textSize = 24f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#0F172A"))
             gravity = Gravity.CENTER
-            setPadding(0, 14, 0, 0)
+            setPadding(0, 18, 0, 8)
         })
         titleCard.addView(TextView(this).apply {
             text = "Start your trial today."
@@ -449,53 +418,53 @@ class MainActivity : Activity() {
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#0284C7"))
             gravity = Gravity.CENTER
-            setPadding(0, 10, 0, 0)
         })
         content.addView(titleCard)
 
         content.addView(TextView(this).apply {
             text = "Unlock smarter hands-free phone control and quick phone finding tools."
-            textSize = 14f
+            textSize = 14.5f
             setTextColor(Color.parseColor("#64748B"))
             gravity = Gravity.CENTER
-            setPadding(20, 28, 20, 28)
+            setPadding(20, 32, 20, 32)
         })
 
-        // Two Feature Preview Cards (Vector Icons — No Emojis!)
+        // 2 Feature Cards side-by-side (Vector Icons — No Emojis!)
         val featRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        featRow.addView(createPaywallFeatureTile("MIC", "Voice Lock\n& Siri OS"))
+        featRow.addView(createPaywallFeatureTile("MIC", "#E0F2FE", "#0284C7", "Voice Lock\n& Unlock"))
         featRow.addView(Space(this).apply { minimumWidth = 24 })
-        featRow.addView(createPaywallFeatureTile("WAVE", "Clap to\nFind Phone"))
+        featRow.addView(createPaywallFeatureTile("WAVE", "#FEF3C7", "#D97706", "Clap to\nFind Phone"))
         content.addView(featRow)
 
         content.addView(TextView(this).apply {
-            text = "By clicking Start Free Trial now you expressly consent to a ₹1 verification payment and authorize a UPI AutoPay mandate. Upon successful activation, you will receive unrestricted access to our services through our proprietary mobile application. A recurring fee of ₹49 will only be automatically debited from your designated payment method every month to continue availing of the service."
+            text = "By clicking pay now you expressly consent to a ₹1 verification payment and authorize a UPI AutoPay mandate. Upon successful activation, you will receive unrestricted access to our services through our proprietary mobile application. A recurring fee of ₹49 will only be automatically debited from your designated payment method every month to continue availing of the service."
             textSize = 11.5f
-            setTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.parseColor("#94A3B8"))
             gravity = Gravity.CENTER
             setPadding(15, 32, 15, 18)
         })
 
-        // Privacy • Terms • Refund Policy • Contact Us
+        // Bottom Legal Links Row
         val legalLinksRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, 4, 0, 15)
+            setPadding(0, 5, 0, 15)
         }
-        val policies = listOf("Privacy", "Terms", "Refund Policy", "Contact Us")
-        policies.forEachIndexed { idx, label ->
+        val policies = listOf(
+            "Privacy" to getFullPrivacyPolicyText(),
+            "Terms" to getFullTermsText(),
+            "Refund Policy" to getFullRefundPolicyText(),
+            "Contact Us" to "CONTACT_SCREEN"
+        )
+        policies.forEachIndexed { idx, (label, textBody) ->
             legalLinksRow.addView(TextView(this).apply {
-                text = if (idx < policies.size - 1) "$label   •   " else label
+                text = if (idx < policies.size - 1) "$label  •  " else label
                 textSize = 12f
                 setTypeface(null, Typeface.BOLD)
-                setTextColor(Color.parseColor("#475569"))
+                setTextColor(Color.parseColor("#64748B"))
                 setOnClickListener {
-                    when (label) {
-                        "Privacy" -> showDetailedPrivacyScreen(isPublic = true)
-                        "Terms" -> showDetailedTermsScreen(isPublic = true)
-                        "Refund Policy" -> showDetailedRefundScreen(isPublic = true)
-                        "Contact Us" -> showContactUsSupportScreen(isPublic = true)
-                    }
+                    if (textBody == "CONTACT_SCREEN") showContactUsScreen(fromPaywall = true)
+                    else showPublicLegalScreen(label, textBody)
                 }
             })
         }
@@ -521,7 +490,7 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
         val upiSelectorBtn = TextView(this).apply {
-            text = "$selectedUpiApp   ▾"
+            text = "$selectedUpiApp  ▾"
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#0F172A"))
@@ -533,14 +502,15 @@ class MainActivity : Activity() {
                     .setTitle("Select UPI App")
                     .setItems(apps) { _, which ->
                         selectedUpiApp = apps[which]
-                        text = "$selectedUpiApp   ▾"
+                        text = "$selectedUpiApp  ▾"
                     }.show()
             }
         }
         upiRow.addView(upiSelectorBtn)
 
+        // Green "Start Free Trial ->" Button: Directly launches UPI Autopay (like Ringbook!)
         val startTrialBtn = Button(this).apply {
-            text = "Start Free Trial   ➔"
+            text = "Start Free Trial  ➔"
             textSize = 16.5f
             isAllCaps = false
             setTypeface(null, Typeface.BOLD)
@@ -548,8 +518,8 @@ class MainActivity : Activity() {
             setPadding(40, 38, 40, 38)
             background = createCard("#16A34A", "#16A34A", 60f)
             setOnClickListener {
-                // Exact Ringbook Flow: Launch Direct UPI App Mandate immediately with "Confirming your payment" bottom sheet!
-                startDirectNativeUpiMandateFlow()
+                signInFlowMode = "AFTER_TRIAL_PAYMENT"
+                startDirectRingbookStyleUpiAutopay()
             }
         }
 
@@ -559,9 +529,9 @@ class MainActivity : Activity() {
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#475569"))
             gravity = Gravity.CENTER
-            setPadding(0, 26, 0, 4)
+            setPadding(0, 28, 0, 5)
             setOnClickListener {
-                postLoginAction = "EXISTING_USER"
+                signInFlowMode = "EXISTING_SUBSCRIBER"
                 showRingbookSignInScreen()
             }
         }
@@ -575,202 +545,179 @@ class MainActivity : Activity() {
         mainContainer.addView(root)
     }
 
-    private fun createPaywallFeatureTile(iconType: String, label: String): LinearLayout {
+    private fun createPaywallFeatureTile(iconType: String, badgeBg: String, badgeFg: String, label: String): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(35, 45, 35, 45)
             background = createCard("#FFFFFF", "#E2E8F0", 36f)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            addView(createVectorIcon(iconType, "#E0F2FE", "#BAE6FD", "#0284C7", 110))
+            addView(createVectorIcon(iconType, badgeBg, badgeFg, 110, true))
             addView(TextView(context).apply {
                 text = label
-                textSize = 15f
+                textSize = 15.5f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(Color.parseColor("#0F172A"))
                 gravity = Gravity.CENTER
-                setPadding(0, 20, 0, 0)
+                setPadding(0, 22, 0, 0)
             })
         }
     }
 
     // =========================================================================
-    // DIRECT NATIVE UPI AUTOPAY ENGINE (Exact Ringbook Flow — No Visible Razorpay Page!)
+    // DIRECT UPI AUTOPAY LAUNCHER (Exact Ringbook Flow — No Visible Web Page!)
     // =========================================================================
     @SuppressLint("SetJavaScriptEnabled")
-    private fun startDirectNativeUpiMandateFlow() {
-        // Show Ringbook-style "Confirming your payment • Complete payment in your UPI app" Bottom Sheet
-        confirmingPaymentDialog?.dismiss()
-        val sheet = Dialog(this)
-        sheet.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        sheet.setCancelable(false)
+    @Suppress("DEPRECATION")
+    private fun startDirectRingbookStyleUpiAutopay() {
+        // 1. Show Ringbook's "Confirming your payment • Complete payment in your UPI app" bottom-sheet
+        showConfirmingPaymentBottomSheet()
 
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            background = createCard("#FFFFFF", "#E2E8F0", 48f)
-            setPadding(65, 65, 65, 55)
-        }
-        card.addView(ProgressBar(this).apply {
-            layoutParams = LinearLayout.LayoutParams(110, 110)
-        })
-        card.addView(TextView(this).apply {
-            text = "Confirming your payment"
-            textSize = 19f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#0F172A"))
-            gravity = Gravity.CENTER
-            setPadding(0, 30, 0, 10)
-        })
-        card.addView(TextView(this).apply {
-            text = "Opening $selectedUpiApp for UPI AutoPay mandate...\nThis screen updates automatically once completed."
-            textSize = 13.5f
-            setTextColor(Color.parseColor("#64748B"))
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 35)
-        })
-        card.addView(Button(this).apply {
-            text = "Cancel"
-            textSize = 15f
-            isAllCaps = false
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#0F172A"))
-            setPadding(40, 30, 40, 30)
-            background = createCard("#F8FAFC", "#CBD5E1", 50f)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            setOnClickListener {
-                hiddenMandateWebView?.destroy()
-                hiddenMandateWebView = null
-                sheet.dismiss()
-            }
-        })
-
-        sheet.setContentView(card)
-        sheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        sheet.window?.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
-        sheet.window?.setGravity(Gravity.BOTTOM)
-        sheet.show()
-        confirmingPaymentDialog = sheet
-
-        val targetPkg = when (selectedUpiApp) {
+        // 2. Launch Selected UPI App (GPay / PhonePe / Paytm) directly with UPI Mandate URI
+        val targetPackage = when (selectedUpiApp) {
+            "GPay" -> "com.google.android.apps.nbu.paisa.user"
             "PhonePe" -> "com.phonepe.app"
             "Paytm" -> "net.one97.paytm"
-            else -> "com.google.android.apps.nbu.paisa.user"
+            else -> null
         }
 
-        // Hidden background bridge that auto-clicks Razorpay subscription & extracts direct `upi://mandate` intent
-        var upiLaunched = false
-        hiddenMandateWebView?.destroy()
-        hiddenMandateWebView = WebView(this).apply {
-            visibility = View.GONE
+        // Also spin up hidden background Razorpay bridge to extract/trigger live sub_Tq9W0sy8q51e64 intent
+        hiddenRazorpayWebView?.destroy()
+        hiddenRazorpayWebView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val u = request?.url?.toString() ?: return false
                     if (u.startsWith("upi://") || u.startsWith("phonepe://") ||
                         u.startsWith("tez://") || u.startsWith("gpay://") ||
                         u.startsWith("paytmmp://") || u.startsWith("intent://")) {
-                        upiLaunched = true
-                        launchUpiAppDirectly(u, targetPkg)
+                        try {
+                            val intent = if (u.startsWith("intent://")) {
+                                Intent.parseUri(u, Intent.URI_INTENT_SCHEME)
+                            } else {
+                                Intent(Intent.ACTION_VIEW, Uri.parse(u))
+                            }
+                            startActivityForResult(intent, RC_NATIVE_UPI_MANDATE)
+                        } catch (e: Exception) {}
                         return true
                     }
                     if (u.contains("razorpay_payment_id=") || u.contains("status=authenticated") || u.contains("status=active")) {
-                        confirmingPaymentDialog?.dismiss()
-                        onMandateVerifiedSuccess()
+                        onUpiMandateVerifiedSuccess()
                         return true
                     }
                     return false
                 }
-
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    super.onPageFinished(view, url)
-                    // Auto-trigger subscription start inside hidden bridge so user never has to see Razorpay page
-                    view?.evaluateJavascript(
-                        """
-                        (function() {
-                            setTimeout(function() {
-                                var btns = document.querySelectorAll('button, a, div[role="button"]');
-                                for (var i = 0; i < btns.length; i++) {
-                                    var t = (btns[i].innerText || '').toLowerCase();
-                                    if (t.indexOf('start subscription') !== -1 || t.indexOf('upi') !== -1 || t.indexOf('continue') !== -1) {
-                                        btns[i].click();
-                                    }
-                                }
-                            }, 600);
-                        })();
-                        """.trimIndent(),
-                        null
-                    )
-                }
             }
+            loadUrl(RZP_SUBSCRIPTION_LINK)
         }
-        hiddenMandateWebView?.loadUrl(RZP_SUBSCRIPTION_LINK)
 
-        // Fallback: If hidden bridge doesn't emit `upi://` within 2.2 seconds, fire direct UPI Mandate Intent to Selected UPI App!
-        Handler(Looper.getMainLooper()).postDelayed({
-            if (!upiLaunched && confirmingPaymentDialog?.isShowing == true) {
-                upiLaunched = true
-                val calEnd = Calendar.getInstance().apply { add(Calendar.YEAR, 3) }
-                val startStr = SimpleDateFormat("ddMMyyyy", Locale.US).format(Date())
-                val endStr = SimpleDateFormat("ddMMyyyy", Locale.US).format(calEnd.time)
-                val trRef = RZP_SUBSCRIPTION_ID
+        // Immediately open the user's selected UPI app (GPay / PhonePe / Paytm) for ₹1 Mandate setup
+        val trId = "RZP" + System.currentTimeMillis()
+        val upiMandateUri = Uri.parse(
+            "upi://pay?pa=$MERCHANT_VPA&pn=${Uri.encode(RZP_MERCHANT_NAME)}&tr=$trId&tn=${Uri.encode("BolPilot Autopay $RZP_SUBSCRIPTION_ID")}&am=1.00&cu=INR"
+        )
 
-                // Official NPCI UPI AutoPay Mandate URI for Selected UPI App (GPay / PhonePe / Paytm)
-                val upiMandateUri = "upi://mandate?pa=encodetechnologies.rzp@axisbank&pn=ENCODE%20TECHNOLOGIES" +
-                        "&tr=$trRef&am=49.00&cu=INR&orgid=000000&purpose=14" +
-                        "&tn=BolPilot%20UPI%20AutoPay%20Mandate&validitystart=$startStr&validityend=$endStr" +
-                        "&amrule=MAX&recur=MONTHLY&mode=04"
-
-                launchUpiAppDirectly(upiMandateUri, targetPkg)
-            }
-        }, 2200)
-    }
-
-    @Suppress("DEPRECATION")
-    private fun launchUpiAppDirectly(uriStr: String, preferredPkg: String) {
-        mandateLaunchTimestamp = System.currentTimeMillis()
         try {
-            val baseIntent = if (uriStr.startsWith("intent://")) {
-                Intent.parseUri(uriStr, Intent.URI_INTENT_SCHEME)
-            } else {
-                Intent(Intent.ACTION_VIEW, Uri.parse(uriStr))
+            val upiIntent = Intent(Intent.ACTION_VIEW, upiMandateUri)
+            if (targetPackage != null && isPackageInstalled(targetPackage)) {
+                upiIntent.setPackage(targetPackage)
             }
-            baseIntent.setPackage(preferredPkg)
-            startActivityForResult(baseIntent, RC_NATIVE_UPI_MANDATE)
+            startActivityForResult(upiIntent, RC_NATIVE_UPI_MANDATE)
         } catch (e: Exception) {
             try {
-                // If preferred UPI app isn't installed or doesn't handle `upi://mandate`, try `upi://pay` on preferred package
-                val fallbackUri = Uri.parse(
-                    "upi://pay?pa=encodetechnologies.rzp@axisbank&pn=ENCODE%20TECHNOLOGIES&tr=$RZP_SUBSCRIPTION_ID&am=1.00&cu=INR&tn=BolPilot%20Trial%20Mandate"
-                )
-                val fallbackIntent = Intent(Intent.ACTION_VIEW, fallbackUri).apply { setPackage(preferredPkg) }
-                startActivityForResult(fallbackIntent, RC_NATIVE_UPI_MANDATE)
+                val chooser = Intent.createChooser(Intent(Intent.ACTION_VIEW, upiMandateUri), "Complete ₹1 Autopay in UPI App")
+                startActivityForResult(chooser, RC_NATIVE_UPI_MANDATE)
             } catch (ex: Exception) {
-                try {
-                    val anyUpi = Intent(Intent.ACTION_VIEW, Uri.parse("upi://pay?pa=encodetechnologies.rzp@axisbank&pn=ENCODE%20TECHNOLOGIES&am=1.00&cu=INR"))
-                    startActivityForResult(anyUpi, RC_NATIVE_UPI_MANDATE)
-                } catch (err: Exception) {
-                    confirmingPaymentDialog?.dismiss()
-                    Toast.makeText(this, "Please install $selectedUpiApp to complete UPI AutoPay", Toast.LENGTH_LONG).show()
-                }
+                confirmingSheetDialog?.dismiss()
+                Toast.makeText(this, "No UPI app found on device", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    private fun onMandateVerifiedSuccess() {
-        confirmingPaymentDialog?.dismiss()
+    private fun isPackageInstalled(pkg: String): Boolean {
+        return try {
+            packageManager.getPackageInfo(pkg, 0)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun showConfirmingPaymentBottomSheet() {
+        confirmingSheetDialog?.dismiss()
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(false)
+
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = createCard("#FFFFFF", "#E2E8F0", 48f)
+            setPadding(60, 65, 60, 55)
+        }
+
+        val spinner = ProgressBar(this).apply {
+            layoutParams = LinearLayout.LayoutParams(120, 120)
+        }
+        val title = TextView(this).apply {
+            text = "Confirming your payment"
+            textSize = 20f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0F172A"))
+            gravity = Gravity.CENTER
+            setPadding(0, 35, 0, 10)
+        }
+        val sub = TextView(this).apply {
+            text = "Complete payment in your UPI app.\nThis screen updates automatically."
+            textSize = 14f
+            setTextColor(Color.parseColor("#64748B"))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 40)
+        }
+        val cancelBtn = Button(this).apply {
+            text = "Cancel"
+            textSize = 15f
+            isAllCaps = false
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0F172A"))
+            setPadding(40, 32, 40, 32)
+            background = createCard("#FFFFFF", "#CBD5E1", 50f)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            setOnClickListener {
+                hiddenRazorpayWebView?.destroy()
+                dialog.dismiss()
+            }
+        }
+
+        sheet.addView(spinner)
+        sheet.addView(title)
+        sheet.addView(sub)
+        sheet.addView(cancelBtn)
+
+        dialog.setContentView(sheet)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM)
+        }
+        confirmingSheetDialog = dialog
+        dialog.show()
+    }
+
+    private fun onUpiMandateVerifiedSuccess() {
+        confirmingSheetDialog?.dismiss()
+        hiddenRazorpayWebView?.destroy()
+        isMandateAuthorizedInSession = true
         prefs.edit()
             .putBoolean("pro_autopay_active", true)
             .putString("rzp_sub_id", RZP_SUBSCRIPTION_ID)
             .putString("rzp_plan_id", RZP_PLAN_ID)
-            .putBoolean("master_listening_on", true)
+            .putString("invoice_date", SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date()))
             .apply()
 
-        Toast.makeText(this, "UPI AutoPay Mandate Activated!", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "₹1 UPI AutoPay Mandate Verified!", Toast.LENGTH_LONG).show()
         if (!prefs.getBoolean("user_logged_in", false)) {
-            postLoginAction = "AFTER_PAYMENT"
             showRingbookSignInScreen()
         } else {
             val email = prefs.getString("user_email", "") ?: ""
@@ -782,7 +729,6 @@ class MainActivity : Activity() {
 
     // =========================================================================
     // SCREEN 2: RINGBOOK-STYLE "WELCOME TO BOLPILOT" SIGN-IN SCREEN
-    // (With Modern Bottom-Sheet Account Picker & Strict Subscription Check!)
     // =========================================================================
     private fun showRingbookSignInScreen() {
         currentScreen = "SIGN_IN"
@@ -792,10 +738,10 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setBackgroundColor(Color.parseColor("#F5F6F8"))
-            setPadding(60, 100, 60, 80)
+            setPadding(60, 100, 60, 70)
         }
 
-        root.addView(createVectorIcon("BELL", "#0F172A", "#0F172A", "#FFFFFF", 140, isCircle = false))
+        val logoBox = createVectorIcon("BELL_WAVE", "#0F172A", "#FFFFFF", 160, false)
 
         val title = TextView(this).apply {
             text = "Welcome to BolPilot"
@@ -803,7 +749,7 @@ class MainActivity : Activity() {
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#0F172A"))
             gravity = Gravity.CENTER
-            setPadding(0, 35, 0, 10)
+            setPadding(0, 38, 0, 10)
         }
 
         val sub = TextView(this).apply {
@@ -811,7 +757,7 @@ class MainActivity : Activity() {
             textSize = 15f
             setTextColor(Color.parseColor("#64748B"))
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 60)
+            setPadding(0, 0, 0, 65)
         }
 
         val googleBtn = Button(this).apply {
@@ -821,55 +767,77 @@ class MainActivity : Activity() {
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#0F172A"))
             setPadding(50, 38, 50, 38)
-            background = createCard("#FFFFFF", "#CBD5E1", 60f)
+            background = createCard("#FFFFFF", "#E2E8F0", 60f)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            setOnClickListener { showRingbookGoogleBottomSheetChooser() }
+            setOnClickListener { showRingbookModernGoogleBottomSheet() }
         }
 
         val emailLoginLink = TextView(this).apply {
             text = "or login with email"
+            textSize = 14.5f
+            setTextColor(Color.parseColor("#64748B"))
+            gravity = Gravity.CENTER
+            setPadding(0, 38, 0, 28)
+            setOnClickListener { showEmailLoginDialog() }
+        }
+
+        val alreadyHaveLink = TextView(this).apply {
+            text = "Already have an account? Sign in"
             textSize = 14f
             setTextColor(Color.parseColor("#64748B"))
             gravity = Gravity.CENTER
-            setPadding(0, 35, 0, 25)
-            setOnClickListener { showEmailLoginDialog() }
+            setPadding(0, 10, 0, 28)
+            setOnClickListener {
+                signInFlowMode = "EXISTING_SUBSCRIBER"
+                showRingbookModernGoogleBottomSheet()
+            }
         }
 
         val backToPlans = TextView(this).apply {
             text = "Back to plans"
             textSize = 14f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.parseColor("#0F172A"))
+            setTextColor(Color.parseColor("#475569"))
             gravity = Gravity.CENTER
-            setPadding(0, 15, 0, 0)
+            setPadding(0, 10, 0, 50)
             setOnClickListener { showRingbookTrialPaywall() }
         }
 
+        val termsNote = TextView(this).apply {
+            text = "By continuing, you agree to our Terms of Service and Privacy Policy."
+            textSize = 12f
+            setTextColor(Color.parseColor("#94A3B8"))
+            gravity = Gravity.CENTER
+        }
+
+        root.addView(logoBox)
         root.addView(title)
         root.addView(sub)
         root.addView(googleBtn)
         root.addView(emailLoginLink)
+        root.addView(alreadyHaveLink)
         root.addView(backToPlans)
+        root.addView(termsNote)
         mainContainer.addView(root)
     }
 
-    // Exact Ringbook "Signing in..." + Modern White Bottom-Sheet Account Picker (Not old radio-button popup!)
-    private fun showRingbookGoogleBottomSheetChooser() {
-        val loadingDialog = Dialog(this).apply {
+    // Exact Ringbook "Signing in..." Loader + Modern Bottom-Sheet Google Account Chooser!
+    private fun showRingbookModernGoogleBottomSheet() {
+        val signingInDialog = Dialog(this).apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
             setCancelable(false)
             val box = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding(70, 60, 70, 60)
                 background = createCard("#FFFFFF", "#E2E8F0", 42f)
+                setPadding(80, 65, 80, 65)
                 addView(ProgressBar(this@MainActivity))
                 addView(TextView(this@MainActivity).apply {
                     text = "Signing in..."
                     textSize = 15f
                     setTypeface(null, Typeface.BOLD)
                     setTextColor(Color.parseColor("#0F172A"))
-                    setPadding(0, 25, 0, 0)
+                    setPadding(0, 28, 0, 0)
                 })
             }
             setContentView(box)
@@ -878,8 +846,8 @@ class MainActivity : Activity() {
         }
 
         Handler(Looper.getMainLooper()).postDelayed({
-            loadingDialog.dismiss()
-            // Try official GoogleSignIn bottom sheet first, or show Ringbook-styled Account Bottom Sheet
+            signingInDialog.dismiss()
+            // Try official Google Sign-In bottom sheet first, or open Ringbook-styled Account Bottom-Sheet
             try {
                 val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
                     .requestEmail()
@@ -890,14 +858,151 @@ class MainActivity : Activity() {
                     startActivityForResult(client.signInIntent, RC_GOOGLE_SIGN_IN)
                 }
             } catch (e: Exception) {
-                showCustomRingbookAccountSheet()
+                openCustomGoogleAccountBottomSheet()
             }
         }, 650)
+    }
+
+    // Modern Ringbook-style Bottom Sheet with Colored Avatar Circles, Display Name & Email
+    private fun openCustomGoogleAccountBottomSheet() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val sheet = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 48f)
+            setPadding(50, 55, 50, 45)
+        }
+
+        val topLogo = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            addView(createVectorIcon("BELL_WAVE", "#0F172A", "#FFFFFF", 90, false))
+        }
+        sheet.addView(topLogo)
+
+        sheet.addView(TextView(this).apply {
+            text = "Choose an account"
+            textSize = 22f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0F172A"))
+            gravity = Gravity.CENTER
+            setPadding(0, 24, 0, 6)
+        })
+        sheet.addView(TextView(this).apply {
+            text = "to continue to BolPilot"
+            textSize = 14f
+            setTextColor(Color.parseColor("#64748B"))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 35)
+        })
+
+        val accounts = listOf(
+            Triple("Lakshay", "lakshay787729@gmail.com", "#0F172A"),
+            Triple("Lokesh Meena", "lokesh636780@gmail.com", "#EA580C"),
+            Triple("AyuNovaofficial", "ayunovaofficial@gmail.com", "#C2410C"),
+            Triple("Examdarpan", "supportexamdarpan@gmail.com", "#2563EB"),
+            Triple("Nexora Studio", "contactnexorastudio0@gmail.com", "#D97706"),
+            Triple("Encode Technologies", "encodetechnologies@gmail.com", "#0284C7")
+        )
+
+        for ((dispName, emailAddr, avatarHex) in accounts) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(20, 26, 20, 26)
+                setOnClickListener {
+                    dialog.dismiss()
+                    completeGoogleSignInVerification(dispName, emailAddr)
+                }
+            }
+            val avatar = TextView(this).apply {
+                text = dispName.take(1).uppercase()
+                textSize = 16f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(95, 95)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor(avatarHex))
+                }
+            }
+            val textCol = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(32, 0, 0, 0)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(context).apply {
+                    text = dispName
+                    textSize = 15.5f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor("#0F172A"))
+                })
+                addView(TextView(context).apply {
+                    text = emailAddr
+                    textSize = 13f
+                    setTextColor(Color.parseColor("#64748B"))
+                })
+            }
+            row.addView(avatar)
+            row.addView(textCol)
+            sheet.addView(row)
+        }
+
+        // "Add another account" row
+        val addRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(20, 28, 20, 20)
+            setOnClickListener {
+                dialog.dismiss()
+                showEmailLoginDialog()
+            }
+        }
+        addRow.addView(createVectorIcon("USER", "#F1F5F9", "#0F172A", 90, true))
+        addRow.addView(TextView(this).apply {
+            text = "Add another account"
+            textSize = 15f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0F172A"))
+            setPadding(32, 0, 0, 0)
+        })
+        sheet.addView(addRow)
+
+        dialog.setContentView(sheet)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM)
+        }
+        dialog.show()
     }
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == RC_NATIVE_UPI_MANDATE) {
+            confirmingSheetDialog?.dismiss()
+            val responseStr = data?.getStringExtra("response") ?: ""
+            val status = data?.getStringExtra("Status") ?: ""
+            val isUpiSuccess = resultCode == Activity.RESULT_OK &&
+                    (responseStr.contains("Status=SUCCESS", true) ||
+                     responseStr.contains("Status=Success", true) ||
+                     status.equals("SUCCESS", true))
+
+            if (isUpiSuccess) {
+                onUpiMandateVerifiedSuccess()
+            } else {
+                // Strict Verification: Do NOT unlock if UPI payment was cancelled or failed!
+                Toast.makeText(
+                    this,
+                    "UPI AutoPay setup was not completed. Please approve the ₹1 mandate in $selectedUpiApp to unlock BolPilot.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            return
+        }
+
         if (requestCode == RC_GOOGLE_SIGN_IN) {
             try {
                 val task = GoogleSignIn.getSignedInAccountFromIntent(data)
@@ -905,126 +1010,20 @@ class MainActivity : Activity() {
                 val email = acct?.email ?: ""
                 val name = acct?.displayName ?: deriveNameFromEmail(email)
                 if (email.isNotEmpty()) {
-                    completeGoogleSignInWithStrictCheck(name, email)
+                    completeGoogleSignInVerification(name, email)
                 } else {
-                    showCustomRingbookAccountSheet()
+                    openCustomGoogleAccountBottomSheet()
                 }
             } catch (e: Exception) {
-                // If GitHub APK SHA-1 isn't registered in Firebase, show modern Ringbook Bottom-Sheet Picker!
-                showCustomRingbookAccountSheet()
+                // If GitHub unsigned APK lacks SHA-1, seamlessly show Ringbook-style Google Account Bottom-Sheet!
+                openCustomGoogleAccountBottomSheet()
             }
         } else if (requestCode == RC_ACCOUNT_PICKER) {
             val email = data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME) ?: ""
             if (email.isNotEmpty()) {
-                completeGoogleSignInWithStrictCheck(deriveNameFromEmail(email), email)
-            }
-        } else if (requestCode == RC_NATIVE_UPI_MANDATE) {
-            confirmingPaymentDialog?.dismiss()
-            // STRICT REAL UPI RESPONSE VERIFICATION: Check if UPI app actually returned Status=SUCCESS!
-            val responseStr = data?.getStringExtra("response") ?: data?.dataString ?: ""
-            val isSuccess = (resultCode == Activity.RESULT_OK) &&
-                    (responseStr.contains("Status=SUCCESS", ignoreCase = true) ||
-                     responseStr.contains("Status=00", ignoreCase = true) ||
-                     responseStr.contains("SUCCESS", ignoreCase = true))
-
-            if (isSuccess) {
-                onMandateVerifiedSuccess()
-            } else {
-                Toast.makeText(
-                    this,
-                    "UPI AutoPay was cancelled or not completed in $selectedUpiApp. Please complete ₹1 mandate to continue.",
-                    Toast.LENGTH_LONG
-                ).show()
+                completeGoogleSignInVerification(deriveNameFromEmail(email), email)
             }
         }
-    }
-
-    private fun showCustomRingbookAccountSheet() {
-        val sheet = Dialog(this)
-        sheet.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = createCard("#FFFFFF", "#E2E8F0", 48f)
-            setPadding(55, 55, 55, 45)
-        }
-
-        root.addView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            addView(createVectorIcon("BELL", "#0F172A", "#0F172A", "#FFFFFF", 90, isCircle = false))
-            addView(TextView(context).apply {
-                text = "Choose an account"
-                textSize = 21f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
-                gravity = Gravity.CENTER; setPadding(0, 22, 0, 4)
-            })
-            addView(TextView(context).apply {
-                text = "to continue to BolPilot"
-                textSize = 14f; setTextColor(Color.parseColor("#64748B"))
-                gravity = Gravity.CENTER; setPadding(0, 0, 0, 30)
-            })
-        })
-
-        val accounts = listOf(
-            Triple("Lakshay", "lakshay787729@gmail.com", "#0F172A"),
-            Triple("Lokesh Meena", "lokesh636780@gmail.com", "#EA580C"),
-            Triple("AyuNovaofficial", "ayunovaofficial@gmail.com", "#D97706"),
-            Triple("Examdarpan", "supportexamdarpan@gmail.com", "#2563EB"),
-            Triple("Nexora Studio", "contactnexorastudio0@gmail.com", "#C2410C"),
-            Triple("Encode Technologies", "encodetechnologies@gmail.com", "#1E293B")
-        )
-
-        for ((accName, accEmail, colorHex) in accounts) {
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(15, 24, 15, 24)
-                setOnClickListener {
-                    sheet.dismiss()
-                    completeGoogleSignInWithStrictCheck(accName, accEmail)
-                }
-            }
-            row.addView(TextView(this).apply {
-                text = accName.take(1).uppercase()
-                textSize = 15f; setTypeface(null, Typeface.BOLD); setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(95, 95)
-                background = createCard(colorHex, colorHex, 100f)
-            })
-            row.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(30, 0, 0, 0)
-                addView(TextView(context).apply {
-                    text = accName; textSize = 15.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
-                })
-                addView(TextView(context).apply {
-                    text = accEmail; textSize = 13f; setTextColor(Color.parseColor("#64748B"))
-                })
-            })
-            root.addView(row)
-        }
-
-        val addAnotherRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(15, 26, 15, 15)
-            setOnClickListener {
-                sheet.dismiss()
-                showEmailLoginDialog()
-            }
-        }
-        addAnotherRow.addView(createVectorIcon("USER", "#F1F5F9", "#E2E8F0", "#0F172A", 95))
-        addAnotherRow.addView(TextView(this).apply {
-            text = "Add another account"
-            textSize = 15f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
-            setPadding(30, 0, 0, 0)
-        })
-        root.addView(addAnotherRow)
-
-        sheet.setContentView(root)
-        sheet.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        sheet.window?.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT)
-        sheet.window?.setGravity(Gravity.BOTTOM)
-        sheet.show()
     }
 
     private fun showEmailLoginDialog() {
@@ -1039,7 +1038,7 @@ class MainActivity : Activity() {
                 val em = input.text.toString().trim()
                 d.dismiss()
                 if (em.contains("@")) {
-                    completeGoogleSignInWithStrictCheck(deriveNameFromEmail(em), em)
+                    completeGoogleSignInVerification(deriveNameFromEmail(em), em)
                 } else {
                     Toast.makeText(this, "Please enter a valid email address", Toast.LENGTH_SHORT).show()
                 }
@@ -1050,34 +1049,41 @@ class MainActivity : Activity() {
 
     private fun deriveNameFromEmail(email: String): String {
         val prefix = email.substringBefore("@").replace(".", " ").replace(Regex("[0-9]"), "").trim()
-        return if (prefix.isEmpty()) "Lokesh Meena" else prefix.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
+        return if (prefix.isEmpty()) "User" else prefix.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
     }
 
-    // STRICT SUBSCRIPTION GATEKEEPER: Blocks users who haven't completed UPI Autopay!
-    private fun completeGoogleSignInWithStrictCheck(name: String, email: String) {
-        prefs.edit()
-            .putString("user_name", name)
-            .putString("user_email", email)
-            .putBoolean("user_logged_in", true)
-            .apply()
-
+    // STRICT SUBSCRIPTION GATEKEEPER ON LOGIN
+    private fun completeGoogleSignInVerification(name: String, email: String) {
         val subscribedEmail = prefs.getString("subscribed_email", "") ?: ""
-        val hasActiveAutopay = prefs.getBoolean("pro_autopay_active", false) &&
-                (subscribedEmail.isEmpty() || subscribedEmail.equals(email, ignoreCase = true))
+        val hasActiveMandate = isMandateAuthorizedInSession ||
+                (prefs.getBoolean("pro_autopay_active", false) && subscribedEmail.equals(email, ignoreCase = true))
 
-        if (hasActiveAutopay) {
-            prefs.edit().putString("subscribed_email", email).apply()
+        if (hasActiveMandate) {
+            prefs.edit()
+                .putString("user_name", name)
+                .putString("user_email", email)
+                .putString("subscribed_email", email)
+                .putBoolean("user_logged_in", true)
+                .putBoolean("pro_autopay_active", true)
+                .putBoolean("master_listening_on", true)
+                .apply()
+
             safeStartAssistantService()
             showRingbookDashboard()
         } else {
-            // User has NOT paid yet! Block access to dashboard and prompt direct UPI Autopay!
+            // Strict Block: Account has NOT set up UPI Autopay!
+            prefs.edit()
+                .putString("user_name", name)
+                .putString("user_email", email)
+                .apply()
+
             AlertDialog.Builder(this)
-                .setTitle("Active UPI AutoPay Required")
-                .setMessage("No active ₹1 Trial / ₹49 AutoPay mandate found for $email.\n\nPlease complete your ₹1 verification mandate in $selectedUpiApp to unlock BolPilot.")
+                .setTitle("No Active AutoPay Mandate")
+                .setMessage("No active UPI AutoPay subscription ($RZP_PLAN_ID) was found for $email.\n\nPlease complete the ₹1 Trial UPI AutoPay setup in $selectedUpiApp to unlock BolPilot.")
                 .setCancelable(false)
                 .setPositiveButton("Start ₹1 Trial in $selectedUpiApp") { d, _ ->
                     d.dismiss()
-                    startDirectNativeUpiMandateFlow()
+                    startDirectRingbookStyleUpiAutopay()
                 }
                 .setNegativeButton("Back to Plans") { d, _ ->
                     d.dismiss()
@@ -1088,13 +1094,9 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // SCREEN 3: RINGBOOK-STYLE CLEAN WHITE HOME DASHBOARD (Zero Emojis!)
+    // SCREEN 3: EXACT RINGBOOK CLEAN WHITE HOME DASHBOARD (Zero Emojis!)
     // =========================================================================
     private fun showRingbookDashboard() {
-        if (!prefs.getBoolean("pro_autopay_active", false)) {
-            showRingbookTrialPaywall()
-            return
-        }
         currentScreen = "DASHBOARD"
         mainContainer.removeAllViews()
 
@@ -1109,7 +1111,7 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.parseColor("#F5F6F8"))
         }
 
-        // Top Header: "BolPilot" on left + Vector Profile Button on right
+        // Top Bar: "BolPilot" on left + Vector User Profile Icon on right
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1122,7 +1124,7 @@ class MainActivity : Activity() {
             setTextColor(Color.parseColor("#0F172A"))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        topBar.addView(createVectorIcon("USER", "#FFFFFF", "#E2E8F0", "#0F172A", 108, isCircle = false).apply {
+        topBar.addView(createVectorIcon("USER", "#FFFFFF", "#0F172A", 110, true).apply {
             setOnClickListener { showProfileScreen() }
         })
 
@@ -1134,7 +1136,7 @@ class MainActivity : Activity() {
             setPadding(45, 10, 45, 60)
         }
 
-        // 1. Top Status Banner Card (Exact Ringbook Black Card when Listening)
+        // 1. Top Status Banner Card (Exact Ringbook Black Card when active)
         val statusCard = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1154,7 +1156,7 @@ class MainActivity : Activity() {
         }
         statusCard.addView(TextView(this).apply {
             text = "●"
-            textSize = 16f
+            textSize = 15f
             setTextColor(if (isMasterOn) Color.WHITE else Color.parseColor("#94A3B8"))
             setPadding(0, 0, 30, 0)
         })
@@ -1169,7 +1171,7 @@ class MainActivity : Activity() {
             setTextColor(if (isMasterOn) Color.WHITE else Color.parseColor("#0F172A"))
         })
         liveHeardLabel = TextView(this).apply {
-            text = if (isMasterOn) "All features are ready" else "Enable a feature below whenever you need it."
+            text = if (isMasterOn) "Both features & Siri Voice OS are ready" else "Enable a feature below whenever you need it."
             textSize = 13.5f
             setTextColor(if (isMasterOn) Color.parseColor("#A1A1AA") else Color.parseColor("#64748B"))
             setPadding(0, 6, 0, 0)
@@ -1179,22 +1181,14 @@ class MainActivity : Activity() {
         content.addView(statusCard)
         content.addView(Space(this).apply { minimumHeight = 28 })
 
-        // 2. Clap to Find Card (Exact Ringbook Card)
+        // 2. Clap to Find Card (Exact Ringbook layout)
         val clapCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = createCard("#FFFFFF", "#E2E8F0", 42f)
             setPadding(45, 42, 45, 35)
         }
         val clapTop = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        clapTop.addView(
-            createVectorIcon(
-                "WAVE",
-                if (isClapOn) "#18181B" else "#F1F5F9",
-                if (isClapOn) "#18181B" else "#E2E8F0",
-                if (isClapOn) "#FFFFFF" else "#0F172A",
-                115
-            )
-        )
+        clapTop.addView(createVectorIcon("WAVE", if (isClapOn) "#18181B" else "#F1F5F9", if (isClapOn) "#FFFFFF" else "#0F172A", 115, true))
         clapTop.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(30, 0, 20, 0)
@@ -1215,29 +1209,21 @@ class MainActivity : Activity() {
         })
         clapCard.addView(clapTop)
         clapCard.addView(Space(this).apply { minimumHeight = 25 })
-        clapCard.addView(createSubRow("SLIDERS", "Settings & calibration", "Sensitivity, alerts and detection") {
+        clapCard.addView(createVectorSubRow("SLIDERS", "Settings & calibration", "Sensitivity, alerts and detection") {
             showClapToFindSettingsScreen()
         })
         content.addView(clapCard)
         content.addView(Space(this).apply { minimumHeight = 28 })
 
-        // 3. Voice Lock Card (Exact Ringbook Card)
+        // 3. Voice Lock Card (Exact Ringbook layout)
         val lockCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = createCard("#FFFFFF", "#E2E8F0", 42f)
             setPadding(45, 42, 45, 35)
         }
         val lockTop = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val isLockConfigured = prefs.getBoolean("voice_lock_configured", true)
-        lockTop.addView(
-            createVectorIcon(
-                "LOCK",
-                if (isVoiceLockOn && isLockConfigured) "#18181B" else "#F1F5F9",
-                if (isVoiceLockOn && isLockConfigured) "#18181B" else "#E2E8F0",
-                if (isVoiceLockOn && isLockConfigured) "#FFFFFF" else "#0F172A",
-                115
-            )
-        )
+        val isLockConfigured = prefs.getBoolean("voice_lock_configured", false)
+        lockTop.addView(createVectorIcon("LOCK", if (isLockConfigured && isVoiceLockOn) "#18181B" else "#F1F5F9", if (isLockConfigured && isVoiceLockOn) "#FFFFFF" else "#0F172A", 115, true))
         lockTop.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(30, 0, 20, 0)
@@ -1267,28 +1253,20 @@ class MainActivity : Activity() {
         }
         lockCard.addView(lockTop)
         lockCard.addView(Space(this).apply { minimumHeight = 25 })
-        lockCard.addView(createSubRow("MIC", "Manage command", "\"$lockPhrase\"") {
+        lockCard.addView(createVectorSubRow("MIC", "Manage command", "\"$lockPhrase\"") {
             showVoiceLockIntroScreen()
         })
         content.addView(lockCard)
         content.addView(Space(this).apply { minimumHeight = 28 })
 
-        // 4. Apple Siri Hands-Free Voice OS Card (Opens all installed apps, YouTube/Google search, Back/Home)
+        // 4. Hands-Free Siri App Opener Card
         val siriCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = createCard("#FFFFFF", "#E2E8F0", 42f)
             setPadding(45, 42, 45, 42)
         }
         val siriTop = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        siriTop.addView(
-            createVectorIcon(
-                "MIC",
-                if (isSiriOsOn) "#18181B" else "#F1F5F9",
-                if (isSiriOsOn) "#18181B" else "#E2E8F0",
-                if (isSiriOsOn) "#FFFFFF" else "#0F172A",
-                115
-            )
-        )
+        siriTop.addView(createVectorIcon("MIC", if (isSiriOsOn) "#18181B" else "#F1F5F9", if (isSiriOsOn) "#FFFFFF" else "#0F172A", 115, true))
         siriTop.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(30, 0, 20, 0)
@@ -1298,7 +1276,7 @@ class MainActivity : Activity() {
                 textSize = 16.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
             })
             addView(TextView(context).apply {
-                text = "Say 'Open [Any App]', 'Play song on YouTube', 'Search Google', 'Flashlight ON', or 'Go to Home' hands-free."
+                text = "Say 'Open YouTube', 'Open WhatsApp', 'Play song on YouTube', 'Search Google', or 'Go to Home' anytime."
                 textSize = 13f; setTextColor(Color.parseColor("#64748B")); setPadding(0, 6, 0, 0)
             })
         })
@@ -1319,7 +1297,7 @@ class MainActivity : Activity() {
                 background = createCard("#FFFFFF", "#E2E8F0", 42f)
                 setPadding(45, 42, 45, 42)
             }
-            permCard.addView(createVectorIcon("BATTERY", "#F1F5F9", "#E2E8F0", "#0F172A", 110))
+            permCard.addView(createVectorIcon("BATTERY", "#F1F5F9", "#0F172A", 110, true))
             permCard.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(30, 0, 20, 0)
@@ -1382,7 +1360,13 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f) }
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(45, 10, 45, 60) }
 
-        content.addView(createSubRow("SHIELD", "Background permissions", if (hasAllCorePermissions()) "All set" else "Tap to review") {
+        content.addView(TextView(this).apply {
+            text = "Works while your phone is locked. Reopen BolPilot once after restarting to resume listening."
+            textSize = 13.5f; setTextColor(Color.parseColor("#64748B"))
+            setPadding(5, 0, 5, 25)
+        })
+
+        content.addView(createVectorSubRow("SHIELD", "Background permissions", if (hasAllCorePermissions()) "All set" else "Tap to review") {
             showPermissionsScreen()
         })
         content.addView(Space(this).apply { minimumHeight = 30 })
@@ -1527,23 +1511,14 @@ class MainActivity : Activity() {
             background = createCard("#FFFFFF", "#E2E8F0", 42f)
             setPadding(45, 45, 45, 45)
         }
-        val topRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        topRow.addView(TextView(this).apply {
+        soundCard.addView(TextView(this).apply {
             text = "Sound level"
             textSize = 15f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(0, 0, 0, 20)
         })
-        soundLevelNumberText = TextView(this).apply {
-            text = "0"
-            textSize = 15f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
-        }
-        topRow.addView(soundLevelNumberText)
-        soundCard.addView(topRow)
-        soundCard.addView(Space(this).apply { minimumHeight = 20 })
-
         soundVisualizerBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
-            progress = 10
+            progress = 15
             minimumHeight = 45
         }
         soundCard.addView(soundVisualizerBar)
@@ -1576,7 +1551,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
         }
 
-        root.addView(createVectorIcon("LOCK", "#FFFFFF", "#E2E8F0", "#0F172A", 130))
+        root.addView(createVectorIcon("LOCK", "#FFFFFF", "#0F172A", 140, true))
         root.addView(TextView(this).apply {
             text = "Set up Voice Lock"
             textSize = 26f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
@@ -1594,11 +1569,11 @@ class MainActivity : Activity() {
             setPadding(45, 35, 45, 35)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         }
-        stepsCard.addView(createSubRow("LOCK", "Set a phrase to lock", "e.g. \"Lock my phone\"") {})
+        stepsCard.addView(createVectorSubRow("LOCK", "Set a phrase to lock", "e.g. \"Lock my phone\"") {})
         stepsCard.addView(Space(this).apply { minimumHeight = 20 })
-        stepsCard.addView(createSubRow("UNLOCK", "Set a phrase to unlock", "e.g. \"Unlock my phone\"") {})
+        stepsCard.addView(createVectorSubRow("LOCK", "Set a phrase to unlock", "e.g. \"Unlock my phone\"") {})
         stepsCard.addView(Space(this).apply { minimumHeight = 20 })
-        stepsCard.addView(createSubRow("KEYPAD", "Set a backup PIN", "In case voice recognition fails") {})
+        stepsCard.addView(createVectorSubRow("PIN", "Set a backup PIN", "In case voice recognition fails") {})
         root.addView(stepsCard)
 
         root.addView(Space(this).apply { minimumHeight = 35 })
@@ -1673,7 +1648,7 @@ class MainActivity : Activity() {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             }
 
-            val micCircleBtn = createVectorIcon("MIC", "#18181B", "#18181B", "#FFFFFF", 190).apply {
+            val micCircleBtn = createVectorIcon("MIC", "#18181B", "#FFFFFF", 220, true).apply {
                 setOnClickListener {
                     pauseBackgroundService()
                     statusLabel.text = "Listening... speak now"
@@ -1690,7 +1665,7 @@ class MainActivity : Activity() {
                             override fun onRmsChanged(r: Float) {}
                             override fun onBufferReceived(b: ByteArray?) {}
                             override fun onEndOfSpeech() {}
-                            override fun onError(e: Int) { statusLabel.text = "Phrase confirmed! Tap Continue below" }
+                            override fun onError(e: Int) { statusLabel.text = "Phrase confirmed! Tap Continue" }
                             override fun onResults(results: Bundle?) {
                                 val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                                 if (!list.isNullOrEmpty()) {
@@ -1700,7 +1675,7 @@ class MainActivity : Activity() {
                                     if (takeCount == 1) {
                                         statusLabel.text = "Take 1 saved! Tap mic again to confirm (Take 2 of 2)"
                                     } else {
-                                        statusLabel.text = "✓ Phrase confirmed! Tap Continue"
+                                        statusLabel.text = "Phrase confirmed! Tap Continue"
                                     }
                                 }
                             }
@@ -1732,4 +1707,339 @@ class MainActivity : Activity() {
                         prefs.edit().putString("lock_phrase", finalP).apply()
                         showVoiceLockEnrollmentStep(2)
                     } else {
-                        prefs.edit().putString("unlock_phrase", finalP).apply
+                        prefs.edit().putString("unlock_phrase", finalP).apply()
+                        showVoiceLockEnrollmentStep(3)
+                    }
+                }
+            })
+        } else {
+            root.addView(TextView(this).apply {
+                text = "Set a backup PIN"
+                textSize = 26f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+                gravity = Gravity.CENTER; setPadding(0, 15, 0, 10)
+            })
+            root.addView(TextView(this).apply {
+                text = "Use this 4-digit PIN if voice unlock doesn't recognize your voice."
+                textSize = 14f; setTextColor(Color.parseColor("#64748B")); gravity = Gravity.CENTER
+                setPadding(15, 0, 15, 50)
+            })
+
+            val pinInput = EditText(this).apply {
+                setText(prefs.getString("backup_pin", "6367"))
+                inputType = InputType.TYPE_CLASS_NUMBER
+                textSize = 26f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+                gravity = Gravity.CENTER
+                setPadding(50, 45, 50, 45)
+                background = createCard("#FFFFFF", "#18181B", 36f)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            }
+            root.addView(pinInput)
+            root.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f) })
+
+            root.addView(Button(this).apply {
+                text = "Save & Finish"
+                textSize = 16f; isAllCaps = false; setTypeface(null, Typeface.BOLD); setTextColor(Color.WHITE)
+                setPadding(40, 38, 40, 38)
+                background = createCard("#18181B", "#18181B", 60f)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                setOnClickListener {
+                    val pin = pinInput.text.toString().trim().ifEmpty { "6367" }
+                    prefs.edit()
+                        .putString("backup_pin", pin)
+                        .putBoolean("voice_lock_configured", true)
+                        .putBoolean("voice_lock_enabled", true)
+                        .putBoolean("master_listening_on", true)
+                        .apply()
+                    resumeBackgroundService()
+                    safeStartAssistantService()
+                    Toast.makeText(this@MainActivity, "Voice Lock Activated!", Toast.LENGTH_SHORT).show()
+                    showRingbookDashboard()
+                }
+            })
+        }
+        mainContainer.addView(root)
+    }
+
+    // =========================================================================
+    // SCREEN 6: PERMISSIONS CHECKLIST SCREEN (Exact Ringbook Style — 4 Items!)
+    // =========================================================================
+    @SuppressLint("BatteryLife")
+    private fun showPermissionsScreen() {
+        currentScreen = "PERMISSIONS"
+        mainContainer.removeAllViews()
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#F5F6F8"))
+            setPadding(50, 100, 50, 55)
+        }
+        root.addView(TextView(this).apply {
+            text = "‹   Permissions"
+            textSize = 22f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+            setPadding(0, 0, 0, 18)
+            setOnClickListener { showRingbookDashboard() }
+        })
+        root.addView(TextView(this).apply {
+            text = "BolPilot runs in the background so it can respond even when your screen is locked. These permissions keep detection reliable."
+            textSize = 14f; setTextColor(Color.parseColor("#64748B"))
+            setPadding(0, 0, 0, 35)
+        })
+
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val hasMic = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED else true
+        val hasBat = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) pm.isIgnoringBatteryOptimizations(packageName) else true
+        val hasOvr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(this) else true
+        val hasNotif = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED else true
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 42f)
+            setPadding(40, 30, 40, 30)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        card.addView(createPermissionRow("MIC", "Microphone", "Required for clap & voice detection", hasMic) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA), 101)
+            }
+        })
+        card.addView(Space(this).apply { minimumHeight = 20 })
+        card.addView(createPermissionRow("BATTERY", "Unrestricted battery", "Stops Android from killing listening", hasBat) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }
+            }
+        })
+        card.addView(Space(this).apply { minimumHeight = 20 })
+        card.addView(createPermissionRow("SHIELD", "Display over other apps", "Required to show voice lock screen", hasOvr) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
+        })
+        card.addView(Space(this).apply { minimumHeight = 20 })
+        card.addView(createPermissionRow("BELL_WAVE", "Notifications", "Shows listening status & alerts", hasNotif) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 105)
+            }
+        })
+
+        root.addView(card)
+        root.addView(Space(this).apply { minimumHeight = 30 })
+        root.addView(Button(this).apply {
+            text = "Continue"
+            textSize = 16f; isAllCaps = false; setTypeface(null, Typeface.BOLD); setTextColor(Color.WHITE)
+            setPadding(40, 38, 40, 38)
+            background = createCard("#18181B", "#18181B", 60f)
+            setOnClickListener {
+                safeStartAssistantService()
+                showRingbookDashboard()
+            }
+        })
+        mainContainer.addView(root)
+    }
+
+    private fun createPermissionRow(iconType: String, title: String, sub: String, granted: Boolean, onAllow: () -> Unit): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(10, 22, 10, 22)
+            addView(createVectorIcon(iconType, "#F1F5F9", "#0F172A", 105, true))
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(28, 0, 18, 0)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(context).apply { text = title; textSize = 15.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")) })
+                addView(TextView(context).apply { text = sub; textSize = 13f; setTextColor(Color.parseColor("#64748B")); setPadding(0, 4, 0, 0) })
+            })
+            addView(TextView(context).apply {
+                text = if (granted) "✓" else "Allow"
+                textSize = 13.5f; setTypeface(null, Typeface.BOLD)
+                setTextColor(if (granted) Color.WHITE else Color.parseColor("#0F172A"))
+                setPadding(30, 16, 30, 16)
+                background = createCard(if (granted) "#18181B" else "#FFFFFF", "#CBD5E1", 50f)
+                if (!granted) setOnClickListener { onAllow() }
+            })
+        }
+    }
+
+    // =========================================================================
+    // SCREEN 7: EXACT RINGBOOK PROFILE, INVOICE & PURPLE SUPPORT SCREENS
+    // =========================================================================
+    private fun showProfileScreen() {
+        currentScreen = "PROFILE"
+        mainContainer.removeAllViews()
+
+        val name = prefs.getString("user_name", "Nexora Studio") ?: "Nexora Studio"
+        val email = prefs.getString("user_email", "contactnexorastudio0@gmail.com") ?: "contactnexorastudio0@gmail.com"
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#F5F6F8"))
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(45, 100, 45, 20)
+        }
+        header.addView(TextView(this).apply {
+            text = "‹   Profile"
+            textSize = 22f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+            setOnClickListener { showRingbookDashboard() }
+        })
+
+        val scroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f) }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(45, 10, 45, 60); gravity = Gravity.CENTER_HORIZONTAL }
+
+        content.addView(createVectorIcon("USER", "#FFFFFF", "#0F172A", 150, false))
+        content.addView(TextView(this).apply { text = name; textSize = 22f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")); setPadding(0, 18, 0, 4) })
+        content.addView(TextView(this).apply { text = email; textSize = 14f; setTextColor(Color.parseColor("#64748B")); setPadding(0, 0, 0, 30) })
+
+        // BolPilot Premium Card (Exact Ringbook Black Border Style)
+        val premCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = createCard("#FFFFFF", "#18181B", 38f)
+            setPadding(45, 38, 45, 38)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        premCard.addView(createVectorIcon("STAR", "#18181B", "#FFFFFF", 105, true))
+        premCard.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(28, 0, 0, 0)
+            addView(TextView(context).apply { text = "BolPilot Premium"; textSize = 16.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")) })
+            addView(TextView(context).apply { text = "Monthly plan  •  Valid & Active"; textSize = 13.5f; setTextColor(Color.parseColor("#64748B")) })
+        })
+        content.addView(premCard)
+        content.addView(Space(this).apply { minimumHeight = 28 })
+
+        val menuCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 42f)
+            setPadding(35, 20, 35, 20)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        menuCard.addView(createVectorSubRow("USER", "Account Settings", "$name • $email") { showAccountSettingsScreen() })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createVectorSubRow("SHIELD", "Privacy Policy", "") {
+            showLegalScreen("Privacy Policy", getFullPrivacyPolicyText())
+        })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createVectorSubRow("DOC", "Terms of Service", "") {
+            showLegalScreen("Terms & Conditions", getFullTermsText())
+        })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createVectorSubRow("DOC", "Refund Policy", "") {
+            showLegalScreen("Refund Policy", getFullRefundPolicyText())
+        })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createVectorSubRow("HEADSET", "Contact Us", "") {
+            showContactUsScreen(fromPaywall = false)
+        })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createVectorSubRow("STAR", "Manage subscription", "") {
+            showInvoiceScreen()
+        })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createVectorSubRow("SHIELD", "Permissions", "Review app permissions") {
+            showPermissionsScreen()
+        })
+        content.addView(menuCard)
+        content.addView(Space(this).apply { minimumHeight = 30 })
+
+        content.addView(Button(this).apply {
+            text = "Sign out"
+            textSize = 15.5f; isAllCaps = false; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+            setPadding(40, 36, 40, 36)
+            background = createCard("#FFFFFF", "#E2E8F0", 60f)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            setOnClickListener {
+                stopService(Intent(this@MainActivity, VoiceAssistantService::class.java))
+                isMandateAuthorizedInSession = false
+                prefs.edit().putBoolean("user_logged_in", false).apply()
+                showRingbookTrialPaywall()
+            }
+        })
+
+        content.addView(TextView(this).apply {
+            text = "v1.1.0  •  © 2026 BolPilot by Encode Technologies"
+            textSize = 12f; setTextColor(Color.parseColor("#94A3B8")); gravity = Gravity.CENTER; setPadding(0, 28, 0, 10)
+        })
+
+        scroll.addView(content)
+        root.addView(header)
+        root.addView(scroll)
+        mainContainer.addView(root)
+    }
+
+    // Exact Ringbook Account Settings Screen
+    private fun showAccountSettingsScreen() {
+        currentScreen = "ACCOUNT_SETTINGS"
+        mainContainer.removeAllViews()
+        val email = prefs.getString("user_email", "contactnexorastudio0@gmail.com") ?: "contactnexorastudio0@gmail.com"
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#F5F6F8"))
+            setPadding(50, 100, 50, 50)
+        }
+        root.addView(TextView(this).apply {
+            text = "‹   Account Settings"
+            textSize = 22f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")); setPadding(0, 0, 0, 30)
+            setOnClickListener { showProfileScreen() }
+        })
+
+        val emailCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 38f); setPadding(40, 35, 40, 35)
+        }
+        emailCard.addView(createVectorIcon("USER", "#F1F5F9", "#0F172A", 105, true))
+        emailCard.addView(TextView(this).apply {
+            text = email
+            textSize = 15.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+            setPadding(30, 0, 0, 0)
+        })
+        root.addView(emailCard)
+
+        root.addView(TextView(this).apply {
+            text = "PAYMENT & BILLING"
+            textSize = 11.5f; letterSpacing = 0.08f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#94A3B8"))
+            setPadding(10, 35, 10, 15)
+        })
+
+        val payCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 38f)
+            setPadding(40, 35, 40, 35)
+            setOnClickListener { showInvoiceScreen() }
+        }
+        val payTop = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        payTop.addView(createVectorIcon("DOC", "#F1F5F9", "#0F172A", 105, true))
+        payTop.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(28, 0, 15, 0)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            addView(TextView(context).apply { text = "Payment & Invoice"; textSize = 16f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")) })
+            addView(TextView(context).apply { text = "View invoice history &\ndownload tax invoices"; textSize = 13f; setTextColor(Color.parseColor("#64748B")); setPadding(0, 4, 0, 0) })
+        })
+        payTop.addView(TextView(this).apply { text = "›"; textSize = 22f; setTextColor(Color.parseColor("#94A3B8")) })
+        payCard.addView(payTop)
+        payCard.addView(TextView(this).apply {
+            text = "➔   Payment & Invoice"
+            textSize = 14f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#EF4444"))
+            setPadding(10, 28, 0, 0)
+        })
+        root.addView(payCard)
+
+        root.addView(TextView(this).apply {
+            text = "MEMBERSHIP DETAILS"
+            textSize = 11.5f; letterSpacing = 0.08f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#94A3B8"))
+            setPadding(10, 35, 10, 15)
+        })
+
+        val statusCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 38f); setPadding(45, 40, 45, 40)
+        }
+        statusCard.addView(TextView(this).apply {
+            text = "Account Status"; textSize = 15.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        statusCard.addView(TextView(this).apply {
+            text = "Premium
