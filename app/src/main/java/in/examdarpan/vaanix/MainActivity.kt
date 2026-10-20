@@ -2,6 +2,12 @@ package `in`.examdarpan.vaanix
 
 import android.Manifest
 import android.app.AlertDialog
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.ActivityNotFoundException
@@ -62,6 +68,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var lastRecognized = ""
     private var pendingPhoneNumber: String? = null
     private var speechRecognizer: SpeechRecognizer? = null
+    @Volatile private var clapFinderActive = false
+    private var clapRecorder: AudioRecord? = null
+    private var clapThread: Thread? = null
     private var tts: TextToSpeech? = null
     private var auth: FirebaseAuth? = null
     private var signedInName: String? = null
@@ -71,6 +80,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startListening() else updateStatus("Microphone permission is needed to hear commands")
+    }
+    private val clapPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startClapFinder() else toast("Microphone permission is required for clap finder")
     }
     private val googleLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode != RESULT_OK || result.data == null) {
@@ -579,6 +591,91 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         addHistory(command, result)
         updateStatus(result)
         if (currentPage == "home") showPage("home")
+    }
+
+    private fun startClapFinder() {
+        if (clapFinderActive) {
+            toast("Clap finder is already active")
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            clapPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        val sampleRate = 16000
+        val minBuffer = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (minBuffer <= 0) {
+            toast("Clap finder is not supported by this device")
+            return
+        }
+        try {
+            val recorder = AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate, AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer, sampleRate / 2))
+            if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                recorder.release()
+                toast("Could not start microphone for clap finder")
+                return
+            }
+            clapRecorder = recorder
+            clapFinderActive = true
+            recorder.startRecording()
+            toast("Clap finder active for 30 seconds. Keep the app open; clap to trigger an alert.")
+            clapThread = Thread {
+                val buffer = ShortArray(maxOf(256, minBuffer / 2))
+                val startedAt = System.currentTimeMillis()
+                var lastAlertAt = 0L
+                try {
+                    while (clapFinderActive && System.currentTimeMillis() - startedAt < 30_000L) {
+                        val count = recorder.read(buffer, 0, buffer.size)
+                        if (count > 0) {
+                            var sum = 0.0
+                            for (i in 0 until count) {
+                                val sample = buffer[i].toDouble()
+                                sum += sample * sample
+                            }
+                            val rms = kotlin.math.sqrt(sum / count)
+                            val now = System.currentTimeMillis()
+                            if (rms > 8500 && now - lastAlertAt > 1800L) {
+                                lastAlertAt = now
+                                runOnUiThread {
+                                    if (!isFinishing && clapFinderActive) {
+                                        speak(if (responseLanguage == "hi-IN") "Phone mil gaya!" else "I heard a clap!")
+                                        try {
+                                            val vibrator = if (Build.VERSION.SDK_INT >= 31) {
+                                                (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+                                            } else {
+                                                @Suppress("DEPRECATION")
+                                                getSystemService(VIBRATOR_SERVICE) as Vibrator
+                                            }
+                                            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 180, 100, 260), -1))
+                                            else @Suppress("DEPRECATION") vibrator.vibrate(440)
+                                        } catch (_: Exception) { }
+                                        toast("Clap detected — BolPilot heard a loud sound")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    runOnUiThread { if (!isFinishing) toast("Clap finder stopped because microphone access ended") }
+                } finally {
+                    try { recorder.stop() } catch (_: Exception) { }
+                    recorder.release()
+                    if (clapRecorder === recorder) clapRecorder = null
+                    clapFinderActive = false
+                    runOnUiThread { if (!isFinishing) updateStatus("Clap finder finished. Tap “Find my phone” to try again.") }
+                }
+            }.apply { name = "BolPilot-ClapFinder"; start() }
+        } catch (e: Exception) {
+            clapFinderActive = false
+            toast("Unable to start clap finder: ${e.localizedMessage ?: "unknown error"}")
+        }
+    }
+
+    private fun stopClapFinder() {
+        clapFinderActive = false
+        try { clapRecorder?.stop() } catch (_: Exception) { }
+        clapRecorder = null
     }
 
     private fun showVoiceLockWizard() {
