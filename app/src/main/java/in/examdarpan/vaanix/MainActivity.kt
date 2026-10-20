@@ -1476,3 +1476,177 @@ class MainActivity : Activity() {
         val hasOvr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(this) else true
 
         val listCol = LinearLayout(this).apply {
+
+            val items = listOf(
+                "Microphone access" to hasMic,
+                "Ignore battery optimization" to hasBat,
+                "Display over other apps" to hasOvr
+            )
+            items.forEach { (label, granted) ->
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    background = createCard("#FFFFFF", "#E2E8F0", 28f)
+                    setPadding(30, 28, 30, 28)
+                    addView(TextView(this@MainActivity).apply {
+                        text = label
+                        textSize = 15f
+                        setTextColor(Color.parseColor("#0F172A"))
+                    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(TextView(this@MainActivity).apply {
+                        text = if (granted) "Granted" else "Set up"
+                        textSize = 13f
+                        setTypeface(null, Typeface.BOLD)
+                        setTextColor(if (granted) Color.parseColor("#15803D") else Color.parseColor("#1D4ED8"))
+                    })
+                    setOnClickListener {
+                        when (label) {
+                            "Microphone access" -> requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 102)
+                            "Ignore battery optimization" -> {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                    try {
+                                        startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                                    } catch (_: Exception) {
+                                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                                    }
+                                }
+                            }
+                            "Display over other apps" -> {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                                }
+                            }
+                        }
+                    }
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = 18
+                })
+            }
+        }
+        root.addView(listCol, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(Button(this).apply {
+            text = "Done"
+            isAllCaps = false
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            background = createCard("#18181B", "#18181B", 50f)
+            setPadding(30, 28, 30, 28)
+            setOnClickListener { showRingbookDashboard() }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        mainContainer.addView(root)
+    }
+
+    private fun showProfileScreen() {
+        showRingbookSignInScreen()
+    }
+
+    private fun createCard(fill: String, stroke: String, radiusDp: Float): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(Color.parseColor(fill))
+            cornerRadius = radiusDp * resources.displayMetrics.density
+            setStroke((resources.displayMetrics.density).toInt().coerceAtLeast(1), Color.parseColor(stroke))
+        }
+    }
+
+    private fun createRoundBadge(label: String): TextView {
+        return TextView(this).apply {
+            text = label
+            textSize = 24f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#0F172A"))
+            background = createCard("#F1F5F9", "#E2E8F0", 100f)
+            layoutParams = LinearLayout.LayoutParams(
+                (58 * resources.displayMetrics.density).toInt(),
+                (58 * resources.displayMetrics.density).toInt()
+            )
+        }
+    }
+
+    private fun createRingbookSwitch(checked: Boolean, changed: (Boolean) -> Unit): Switch {
+        return Switch(this).apply {
+            isChecked = checked
+            textOn = "ON"
+            textOff = "OFF"
+            setOnCheckedChangeListener { _, value -> changed(value) }
+        }
+    }
+
+    private fun createSubRow(icon: String, title: String, subtitle: String, action: () -> Unit): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = createCard("#F8FAFC", "#E2E8F0", 24f)
+            setPadding(24, 24, 24, 24)
+            addView(TextView(this@MainActivity).apply {
+                text = icon
+                textSize = 22f
+                setPadding(0, 0, 22, 0)
+            })
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 14f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor("#0F172A"))
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = subtitle
+                    textSize = 12f
+                    setTextColor(Color.parseColor("#64748B"))
+                    setPadding(0, 5, 0, 0)
+                })
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(this@MainActivity).apply {
+                text = "›"
+                textSize = 24f
+                setTextColor(Color.parseColor("#64748B"))
+            })
+            setOnClickListener { action() }
+        }
+    }
+
+    private fun createStepperButton(label: String, action: () -> Unit): View {
+        return TextView(this).apply {
+            text = label
+            textSize = 20f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#0F172A"))
+            background = createCard("#FFFFFF", "#CBD5E1", 20f)
+            setPadding(28, 16, 28, 16)
+            setOnClickListener { action() }
+        }
+    }
+
+    private fun createToggleRow(title: String, subtitle: String, checked: Boolean, changed: (Boolean) -> Unit): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 24f)
+            setPadding(24, 22, 24, 22)
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 14f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor("#0F172A"))
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = subtitle
+                    textSize = 12f
+                    setTextColor(Color.parseColor("#64748B"))
+                    setPadding(0, 5, 0, 0)
+                })
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(Switch(this@MainActivity).apply {
+                isChecked = checked
+                setOnCheckedChangeListener { _, value -> changed(value) }
+            })
+        }
+    }
+
+    private fun createPaywallFeatureTile(title: String, subtitle: String): View {
+        return createSubRow("✓", title, subtitle) { }
+    }
+}
