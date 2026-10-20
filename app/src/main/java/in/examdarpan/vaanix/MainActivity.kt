@@ -73,7 +73,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
     private val googleLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode != RESULT_OK || result.data == null) {
-            toast("Google sign-in cancelled")
+            // Stay on the login screen: an uncompleted sign-in must never enter guest mode.
+            signedInName = null
+            showPage("profile")
+            toast("Google sign-in did not complete. Check Google Play Services, SHA fingerprints and Firebase Google provider.")
             return@registerForActivityResult
         }
         try {
@@ -87,8 +90,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     showPage("home")
                 } else toast("Firebase sign-in failed: ${taskResult.exception?.localizedMessage ?: "Unknown error"}")
             } ?: toast("Firebase is not configured yet")
+        } catch (e: ApiException) {
+            val reason = when (e.statusCode) {
+                10 -> "Developer configuration error. Add the signing certificate SHA-1 and SHA-256 for this exact APK in Firebase, then download a fresh google-services.json."
+                12501 -> "Google account selection was cancelled."
+                12500 -> "Google sign-in failed. Check Google Play Services and Firebase OAuth configuration."
+                else -> "Google sign-in error code ${e.statusCode}."
+            }
+            showPage("profile")
+            toast(reason)
         } catch (e: Exception) {
-            toast("Google sign-in failed: ${e.localizedMessage ?: "Please check Firebase setup"}")
+            showPage("profile")
+            toast("Google sign-in failed: ${e.localizedMessage ?: "Check Firebase setup"}")
         }
     }
 
@@ -156,10 +169,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun showPage(page: String) {
-        currentPage = page
         if (!::content.isInitialized) return
+        // Hard gate every in-app destination until Firebase has an authenticated user.
+        // This also blocks Home/History/Settings/Premium after a cancelled sign-in.
+        val destination = if (auth?.currentUser == null && page != "profile") "profile" else page
+        currentPage = destination
         content.removeAllViews()
-        val pageView = when (page) {
+        val pageView = when (destination) {
             "history" -> historyPage()
             "settings" -> settingsPage()
             "profile" -> profilePage()
