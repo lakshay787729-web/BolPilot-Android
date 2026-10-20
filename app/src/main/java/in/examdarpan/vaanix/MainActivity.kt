@@ -263,7 +263,7 @@ class MainActivity : AppCompatActivity() {
         background = GradientDrawable().apply { setColor(bg); cornerRadius = dp(30).toFloat() }
     }
 
-    private fun action(text: String, bg: Int, fg: Int, outlined: Boolean = false, click: () -> Unit): TextView = TextView(this).apply {
+    private fun action(text: String, bg: Int, fg: Int = Color.WHITE, outlined: Boolean = false, click: () -> Unit): TextView = TextView(this).apply {
         this.text = text; textSize = 15f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER
         setTextColor(fg); setPadding(dp(16), dp(15), dp(16), dp(15))
         background = GradientDrawable().apply {
