@@ -55,15 +55,15 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private var lastUnlockTimestamp = 0L
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val CHANNEL_ID = "BolPilot_Ringbook_OS"
+    private val CHANNEL_ID = "BolPilot_Ultra_OS"
 
     companion object {
         var isRunning = false
-        var lastHeardCommand = "Ready • Listening in background"
+        var lastHeardCommand = "Listening in background..."
         var liveSoundLevel = 0
     }
 
-    // Smart Media Guard: Never pauses YouTube, Facebook, or Instagram videos!
+    // Smart Media Guard: Automatically pauses mic while YouTube/Facebook/Instagram video plays so video NEVER pauses!
     private val mediaPlaybackCallback = object : AudioManager.AudioPlaybackCallback() {
         override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
             super.onPlaybackConfigChanged(configs)
@@ -90,6 +90,12 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         super.onCreate()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            stopSelf()
+            return
+        }
+
+        val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
+        if (!prefs.getBoolean("pro_autopay_active", false)) {
             stopSelf()
             return
         }
@@ -143,10 +149,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         return START_STICKY
     }
 
-    // Keeps running 24/7 even when user swipes app away from recents!
+    // Auto-restarts in background even if user kills/swipes app away from recents!
     override fun onTaskRemoved(rootIntent: Intent?) {
         val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
-        if (prefs.getBoolean("master_listening_on", true)) {
+        if (prefs.getBoolean("master_listening_on", true) && prefs.getBoolean("pro_autopay_active", false)) {
             val restartIntent = Intent(applicationContext, VoiceAssistantService::class.java)
             val pending = PendingIntent.getService(
                 this, 1, restartIntent,
@@ -167,7 +173,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         } catch (e: Exception) {}
     }
 
-    // 1px Invisible Overlay Bridge so Android 10-15 allows opening ANY app from background!
+    // 1px Invisible Overlay Bridge so Android 10-15 allows launching ANY app from background!
     private fun setupOverlayBridge() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
             try {
@@ -247,7 +253,6 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             try {
                 speechRecognizer?.destroy()
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(applicationContext)
-                // Always recognize in en-IN so English + Hinglish app names ("Open Rapido", "Open YouTube") come in clean Latin script!
                 recognizerIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
@@ -335,12 +340,13 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // Converts Devanagari output ("ओपन यूट्यूब", "ओपन व्हाट्सएप") to English words automatically!
+    // Translates Hindi/Devanagari speech recognition output into clean English commands automatically
     private fun normalizeHindiToLatin(input: String): String {
         return input
             .replace("ओपन", "open")
             .replace("खोलो", "open")
             .replace("चलाओ", "play")
+            .replace("सर्च", "search")
             .replace("यूट्यूब", "youtube")
             .replace("व्हाट्सएप", "whatsapp")
             .replace("इंस्टाग्राम", "instagram")
@@ -422,7 +428,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 (unlockPhrase.isNotEmpty() && rawInput.contains(unlockPhrase)) ||
                 (spokenDigits.isNotEmpty() && spokenDigits == backupPin)
 
-        // 1. IF LOCK SCREEN IS SHOWN -> CHECK UNLOCK
+        // 1. IF LOCK SCREEN IS ACTIVE -> CHECK UNLOCK
         if (lockScreenView != null) {
             if (hasUnlockMatch) {
                 lastActionTimestamp = now
@@ -468,7 +474,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         if (cmd.isEmpty()) return false
 
         try {
-            // 4. GO TO HOME / CLOSE APP / BACK TO HOME
+            // 4. GO TO HOME / BACK TO HOME / CLOSE APP
             if (cmd.contains("go to home") || cmd.contains("back to home") ||
                 cmd.contains("home screen") || cmd.contains("close app") ||
                 cmd == "home" || cmd == "go home" || cmd == "back home") {
@@ -574,7 +580,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     .removePrefix("open ")
                     .replace("app", "")
                     .trim()
-                if (targetApp.length >= 1 && openAnyInstalledApp(targetApp)) {
+                if (targetApp.isNotEmpty() && openAnyInstalledApp(targetApp)) {
                     lastActionTimestamp = now
                     return true
                 }
@@ -588,7 +594,6 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         if (cleanReq.isEmpty()) return false
         val pm = packageManager
 
-        // Fast-path aliases for common pronunciation variations
         val knownAliases = listOf(
             Triple(listOf("youtube", "you tube"), "com.google.android.youtube", "YouTube"),
             Triple(listOf("whatsapp", "whats app"), "com.whatsapp", "WhatsApp"),
@@ -623,7 +628,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
-        // Dynamic scan of ALL installed launcher apps on the user's phone
+        // Dynamic scan of ALL installed apps on the device
         val mainIntent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
         val allApps = pm.queryIntentActivities(mainIntent, 0)
 
@@ -631,7 +636,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             val label = info.loadLabel(pm).toString().lowercase(Locale.getDefault()).trim()
             val pkg = info.activityInfo.packageName.lowercase(Locale.getDefault())
             if (label == cleanReq ||
-                (cleanReq.length >= 3 && (label.contains(cleanReq) || cleanReq.contains(label) || pkg.contains(cleanReq)))) {
+                (cleanReq.length >= 2 && (label.contains(cleanReq) || cleanReq.contains(label) || pkg.contains(cleanReq)))) {
                 val launchIntent = pm.getLaunchIntentForPackage(info.activityInfo.packageName)
                 if (launchIntent != null) {
                     val niceName = info.loadLabel(pm).toString()
@@ -676,7 +681,6 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             }
         } catch (e: Exception) {}
 
-        // Show Ringbook-style Blue "Phone found" Fullscreen Overlay if overlay permission is granted
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
             mainHandler.post {
                 try {
