@@ -2,6 +2,12 @@ package `in`.examdarpan.vaanix
 
 import android.Manifest
 import android.app.AlertDialog
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.ActivityNotFoundException
@@ -39,13 +45,13 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
-    private val navy = Color.rgb(7, 10, 28)
-    private val panel = Color.rgb(17, 24, 52)
-    private val panel2 = Color.rgb(27, 36, 73)
-    private val cyan = Color.rgb(101, 232, 255)
-    private val white = Color.rgb(246, 249, 255)
-    private val muted = Color.rgb(168, 180, 207)
-    private val red = Color.rgb(255, 105, 122)
+    private val navy = Color.rgb(247, 249, 252)
+    private val panel = Color.rgb(255, 255, 255)
+    private val panel2 = Color.rgb(238, 243, 249)
+    private val cyan = Color.rgb(34, 105, 220)
+    private val white = Color.rgb(25, 34, 51)
+    private val muted = Color.rgb(102, 115, 135)
+    private val red = Color.rgb(190, 45, 63)
 
     private lateinit var root: LinearLayout
     private lateinit var content: FrameLayout
@@ -62,6 +68,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var lastRecognized = ""
     private var pendingPhoneNumber: String? = null
     private var speechRecognizer: SpeechRecognizer? = null
+    @Volatile private var clapFinderActive = false
+    private var clapRecorder: AudioRecord? = null
+    private var clapThread: Thread? = null
     private var tts: TextToSpeech? = null
     private var auth: FirebaseAuth? = null
     private var signedInName: String? = null
@@ -71,6 +80,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startListening() else updateStatus("Microphone permission is needed to hear commands")
+    }
+    private val clapPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startClapFinder() else toast("Microphone permission is required for clap finder")
     }
     private val googleLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode != RESULT_OK || result.data == null) {
@@ -154,7 +166,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         bottomNav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFF182343.toInt(), 0xFF202A50.toInt(), 0xFF182343.toInt())).apply { cornerRadius = dp(24).toFloat(); setStroke(dp(1), 0xFF334567.toInt()) }
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFFFFFFFF.toInt(), 0xFFF3F6FA.toInt(), 0xFFFFFFFF.toInt())).apply { cornerRadius = dp(24).toFloat(); setStroke(dp(1), 0xFFDCE3EC.toInt()) }
             setPadding(dp(6), dp(5), dp(6), dp(5))
         }
         bottomNav.addView(navButton("⌂\nHome", "home"), LinearLayout.LayoutParams(0, dp(58), 1f))
@@ -199,7 +211,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         col.addView(text("Speak naturally. Get things done.", 14f, muted).apply { setPadding(0, dp(5), 0, dp(18)) })
 
         val micCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF19254C.toInt(), 0xFF10172F.toInt(), 0xFF102C45.toInt())).apply { cornerRadius = dp(30).toFloat(); setStroke(dp(1), 0xFF31476B.toInt()) }
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFFFFFFFF.toInt(), 0xFFF5F8FC.toInt(), 0xFFEAF2FF.toInt())).apply { cornerRadius = dp(30).toFloat(); setStroke(dp(1), 0xFFDCE3EC.toInt()) }
             setPadding(dp(16), dp(22), dp(16), dp(22))
         }
         val mic = TextView(this).apply {
@@ -220,7 +232,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         statusText = text(if (listening) "Speak now" else "Tap to talk · Hands-free mode below", 14f, muted).apply { gravity = Gravity.CENTER }
         micCard.addView(statusText)
         col.addView(micCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
-        val handsFree = button("◉  TURN ON HANDS-FREE", 0xFF163F65.toInt(), cyan) {
+        val handsFree = button("◉  TURN ON HANDS-FREE", 0xFFE7F0FF.toInt(), cyan) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             } else {
@@ -258,7 +270,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         activityCard.addView(lastCommandText)
         col.addView(activityCard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2); bottomMargin = dp(16) })
 
-        val premium = button("Explore BolPilot Premium  ↗", 0xFF393078.toInt(), cyan) { showPage("premium") }
+        val premium = button("Explore BolPilot Premium  ↗", 0xFFE8EEFF.toInt(), cyan) { showPage("premium") }
         premium.textSize = 15f
         col.addView(premium, LinearLayout.LayoutParams(-1, dp(54)))
         scroll.addView(col)
@@ -331,7 +343,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             col.addView(text("YOUR PHONE. YOUR VOICE.", 12f, cyan, true).apply { letterSpacing = .14f; setPadding(0, dp(2), 0, dp(22)) })
             val hero = cardColumn()
             hero.gravity = Gravity.CENTER
-            hero.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF202D56.toInt(), 0xFF111A35.toInt())).apply { cornerRadius = dp(26).toFloat(); setStroke(dp(1), 0xFF3A527C.toInt()) }
+            hero.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFFFFFFFF.toInt(), 0xFFF2F6FB.toInt())).apply { cornerRadius = dp(26).toFloat(); setStroke(dp(1), 0xFFDCE3EC.toInt()) }
             hero.setPadding(dp(22), dp(28), dp(22), dp(28))
             hero.addView(text("✦", 42f, cyan, true).apply { gravity = Gravity.CENTER })
             hero.addView(text("Welcome to BolPilot", 23f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(8)) })
@@ -369,7 +381,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             col.addView(actionRow("Privacy Policy", "How BolPilot handles your information", "View") { openLegalPage("privacy") })
             col.addView(actionRow("Terms of Service", "Terms for using BolPilot", "View") { openLegalPage("terms") })
             col.addView(actionRow("Support & help", "Troubleshoot commands and permissions", "Open") { showPage("help") })
-            col.addView(actionRow("Premium plans", "See future premium options", "View") { showPage("premium") })
+            col.addView(actionRow("Voice lock setup", "Enable screen locking with Android approval", "Set up") { showVoiceLockWizard() })
+            col.addView(actionRow("Premium plans", "Monthly membership and payment status", "View") { showPage("premium") })
             col.addView(button(if (user == null) "Exit Guest Mode" else "Sign out", 0xFF3B1B34.toInt(), red) {
                 if (user == null) {
                     getSharedPreferences("bolpilot_settings", MODE_PRIVATE).edit().putBoolean("guest_mode", false).apply()
@@ -401,16 +414,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun premiumPage(): View {
         val col = pageColumn()
         col.addView(text("BolPilot Premium", 27f, white, true))
-        col.addView(text("A simple place for future premium features", 14f, muted).apply { setPadding(0, dp(4), 0, dp(18)) })
+        col.addView(text("Monthly membership · secure checkout coming next", 14f, muted).apply { setPadding(0, dp(4), 0, dp(18)) })
         val c = cardColumn()
         c.addView(text("✦", 38f, cyan, true).apply { gravity = Gravity.CENTER })
         c.addView(text("Your voice, upgraded", 19f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(6)) })
         c.addView(text("Premium plans must be configured in Google Play Console before real prices, trials, and purchases can be shown. No fake purchase or trial is enabled in this build.", 14f, muted).apply { gravity = Gravity.CENTER })
         col.addView(c, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
-        col.addView(button("Try demo checkout (no payment)", 0xFF163F65.toInt(), cyan) {
+        col.addView(button("Try demo checkout (no payment)", 0xFFE7F0FF.toInt(), cyan) {
             AlertDialog.Builder(this)
-                .setTitle("Demo payment gateway")
-                .setMessage("This is only a UI preview. No money will be charged, no subscription will start, and no trial is activated. A real payment provider and server-side verification must be integrated before launch.")
+                .setTitle("Payment integration pending")
+                .setMessage("No payment is taken here. Before enabling the ₹1 trial, configure Cashfree credentials as server-side secrets, create subscriptions from a trusted backend, verify signed webhooks, and check subscription status from the backend.")
                 .setPositiveButton("Got it", null)
                 .show()
         }, LinearLayout.LayoutParams(-1, dp(52)).apply { bottomMargin = dp(12) })
@@ -506,6 +519,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val q = command.lowercase(Locale.ROOT)
         val result: String
         when {
+            q.contains("find my phone") || q.contains("clap finder") || q.contains("clap se") || q.contains("taali") -> {
+                result = "Clap finder started for 30 seconds. Keep BolPilot open and clap near the phone."
+                startClapFinder()
+            }
             q.contains("lock phone") || q.contains("lock screen") || q.contains("screen lock") || q.contains("फोन लॉक") || q.contains("मोबाइल लॉक") || q.contains("स्क्रीन लॉक") -> {
                 result = lockPhoneScreen()
                 speak(if (responseLanguage == "hi-IN") "Screen lock ke liye device administrator permission zaroori hai. Prompt ko approve karein." else result)
@@ -578,6 +595,116 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         addHistory(command, result)
         updateStatus(result)
         if (currentPage == "home") showPage("home")
+    }
+
+    private fun startClapFinder() {
+        if (clapFinderActive) {
+            toast("Clap finder is already active")
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            clapPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        val sampleRate = 16000
+        val minBuffer = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (minBuffer <= 0) {
+            toast("Clap finder is not supported by this device")
+            return
+        }
+        try {
+            val recorder = AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate, AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer, sampleRate / 2))
+            if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                recorder.release()
+                toast("Could not start microphone for clap finder")
+                return
+            }
+            clapRecorder = recorder
+            clapFinderActive = true
+            recorder.startRecording()
+            toast("Clap finder active for 30 seconds. Keep the app open; clap to trigger an alert.")
+            clapThread = Thread {
+                val buffer = ShortArray(maxOf(256, minBuffer / 2))
+                val startedAt = System.currentTimeMillis()
+                var lastAlertAt = 0L
+                try {
+                    while (clapFinderActive && System.currentTimeMillis() - startedAt < 30_000L) {
+                        val count = recorder.read(buffer, 0, buffer.size)
+                        if (count > 0) {
+                            var sum = 0.0
+                            for (i in 0 until count) {
+                                val sample = buffer[i].toDouble()
+                                sum += sample * sample
+                            }
+                            val rms = kotlin.math.sqrt(sum / count)
+                            val now = System.currentTimeMillis()
+                            if (rms > 8500 && now - lastAlertAt > 1800L) {
+                                lastAlertAt = now
+                                runOnUiThread {
+                                    if (!isFinishing && clapFinderActive) {
+                                        speak(if (responseLanguage == "hi-IN") "Phone mil gaya!" else "I heard a clap!")
+                                        try {
+                                            val vibrator = if (Build.VERSION.SDK_INT >= 31) {
+                                                (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+                                            } else {
+                                                @Suppress("DEPRECATION")
+                                                getSystemService(VIBRATOR_SERVICE) as Vibrator
+                                            }
+                                            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 180, 100, 260), -1))
+                                            else @Suppress("DEPRECATION") vibrator.vibrate(440)
+                                        } catch (_: Exception) { }
+                                        toast("Clap detected — BolPilot heard a loud sound")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    runOnUiThread { if (!isFinishing) toast("Clap finder stopped because microphone access ended") }
+                } finally {
+                    try { recorder.stop() } catch (_: Exception) { }
+                    recorder.release()
+                    if (clapRecorder === recorder) clapRecorder = null
+                    clapFinderActive = false
+                    runOnUiThread { if (!isFinishing) updateStatus("Clap finder finished. Tap “Find my phone” to try again.") }
+                }
+            }.apply { name = "BolPilot-ClapFinder"; start() }
+        } catch (e: Exception) {
+            clapFinderActive = false
+            toast("Unable to start clap finder: ${e.localizedMessage ?: "unknown error"}")
+        }
+    }
+
+    private fun stopClapFinder() {
+        clapFinderActive = false
+        try { clapRecorder?.stop() } catch (_: Exception) { }
+        clapRecorder = null
+    }
+
+    private fun showVoiceLockWizard() {
+        AlertDialog.Builder(this)
+            .setTitle("Set up Voice Lock")
+            .setMessage("Step 1 of 2: Android requires your explicit approval for BolPilot to lock this device. This feature cannot bypass your PIN, password or biometric.\n\nStep 2: Tap Continue to open Android's device-administrator approval screen. After approving it, return and say “lock phone”.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Continue") { _, _ ->
+                val policy = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                val admin = ComponentName(this, BolPilotDeviceAdminReceiver::class.java)
+                if (policy.isAdminActive(admin)) {
+                    AlertDialog.Builder(this).setTitle("Voice Lock is ready")
+                        .setMessage("BolPilot already has Android's screen-lock permission. Say “lock phone” to use it.")
+                        .setPositiveButton("OK", null).show()
+                } else {
+                    try {
+                        startActivity(Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
+                            putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Allow BolPilot to lock the screen only when you explicitly ask.")
+                        })
+                    } catch (e: Exception) {
+                        toast("Could not open Android permission screen: ${e.localizedMessage ?: "unknown error"}")
+                    }
+                }
+            }.show()
     }
 
     private fun lockPhoneScreen(): String {
@@ -697,7 +824,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun pageColumn() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(18)) }
     private fun wrapScroll(view: View): View = ScrollView(this).apply { isFillViewport = true; overScrollMode = View.OVER_SCROLL_NEVER; addView(view) }
-    private fun cardColumn() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF1B2547.toInt(), 0xFF111A34.toInt())).apply { cornerRadius = dp(22).toFloat(); setStroke(dp(1), 0xFF2B3D60.toInt()) }; setPadding(dp(16), dp(16), dp(16), dp(16)) }
+    private fun cardColumn() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFFFFFFFF.toInt(), 0xFFF7F9FC.toInt())).apply { cornerRadius = dp(22).toFloat(); setStroke(dp(1), 0xFFDCE3EC.toInt()) }; setPadding(dp(16), dp(16), dp(16), dp(16)) }
     private fun sectionTitle(s: String) = text(s, 11f, cyan, true).apply { letterSpacing = .14f; setPadding(dp(2), dp(8), 0, dp(10)) }
     private fun text(value: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
         text = value; textSize = size; setTextColor(color); if (bold) setTypeface(typeface, Typeface.BOLD)
@@ -705,7 +832,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
     private fun button(label: String, bg: Int, fg: Int, action: () -> Unit): TextView = TextView(this).apply {
         text = label; textSize = 14f; gravity = Gravity.CENTER; setTextColor(fg); setTypeface(typeface, Typeface.BOLD)
-        background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(bg, panel2)).apply { cornerRadius = dp(18).toFloat(); setStroke(dp(1), 0xFF354B72.toInt()) }; setPadding(dp(10), dp(8), dp(10), dp(8)); isClickable = true; isFocusable = true
+        background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(bg, panel2)).apply { cornerRadius = dp(18).toFloat(); setStroke(dp(1), 0xFFD5DFEA.toInt()) }; setPadding(dp(10), dp(8), dp(10), dp(8)); isClickable = true; isFocusable = true
         setOnClickListener { action() }
     }
     private fun actionRow(title: String, subtitle: String, actionLabel: String, action: () -> Unit): View {
