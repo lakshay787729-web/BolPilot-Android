@@ -77,6 +77,10 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("BolPilotPrefs", Context.MODE_PRIVATE)
 
+        // Fail closed until a trusted backend/webhook can verify the Razorpay subscription.
+        // SharedPreferences are user-controlled and must never grant premium access by themselves.
+        prefs.edit().putBoolean("pro_autopay_active", false).apply()
+
         mainContainer = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#F5F6F8"))
         }
