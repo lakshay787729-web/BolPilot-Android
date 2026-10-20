@@ -360,11 +360,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
             val card = cardColumn()
             card.addView(text("●", 38f, cyan, true).apply { gravity = Gravity.CENTER })
-            card.addView(text(user.displayName ?: signedInName ?: "BolPilot member", 19f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(4)) })
-            card.addView(text(user.email ?: "Google account connected", 13f, muted).apply { gravity = Gravity.CENTER })
+            card.addView(text(user?.displayName ?: signedInName ?: "BolPilot member", 19f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(4)) })
+            card.addView(text(user?.email ?: "Google account connected", 13f, muted).apply { gravity = Gravity.CENTER })
             col.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) })
             col.addView(actionRow("Account & security", "Signed in with Google", "Details") {
-                AlertDialog.Builder(this).setTitle("Account details").setMessage(user.email ?: "Google account connected").setPositiveButton("OK", null).show()
+                AlertDialog.Builder(this).setTitle("Account details").setMessage(user?.email ?: "Google account connected").setPositiveButton("OK", null).show()
             })
             col.addView(actionRow("Privacy Policy", "How BolPilot handles your information", "View") { openLegalPage("privacy") })
             col.addView(actionRow("Terms of Service", "Terms for using BolPilot", "View") { openLegalPage("terms") })
