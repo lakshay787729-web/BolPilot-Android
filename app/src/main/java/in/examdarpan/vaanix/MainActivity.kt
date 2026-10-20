@@ -49,6 +49,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private lateinit var root: LinearLayout
     private lateinit var content: FrameLayout
+    private lateinit var bottomNav: LinearLayout
     private lateinit var statusText: TextView
     private lateinit var lastCommandText: TextView
     private var currentPage = "home"
@@ -73,10 +74,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
     private val googleLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode != RESULT_OK || result.data == null) {
-            // Stay on the login screen: an uncompleted sign-in must never enter guest mode.
+            // Do not let an uncompleted sign-in enter the app; provide a useful next step.
             signedInName = null
             showPage("profile")
-            toast("Google sign-in did not complete. Check Google Play Services, SHA fingerprints and Firebase Google provider.")
+            toast("Google sign-in was cancelled or blocked. If you selected an account, install an APK signed with a SHA-1 registered in Firebase.")
             return@registerForActivityResult
         }
         try {
@@ -148,16 +149,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         content = FrameLayout(this)
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        val nav = LinearLayout(this).apply {
+        bottomNav = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFF182343.toInt(), 0xFF202A50.toInt(), 0xFF182343.toInt())).apply { cornerRadius = dp(24).toFloat(); setStroke(dp(1), 0xFF334567.toInt()) }
             setPadding(dp(6), dp(5), dp(6), dp(5))
         }
-        nav.addView(navButton("⌂\nHome", "home"), LinearLayout.LayoutParams(0, dp(58), 1f))
-        nav.addView(navButton("◷\nHistory", "history"), LinearLayout.LayoutParams(0, dp(58), 1f))
-        nav.addView(navButton("⚙\nSettings", "settings"), LinearLayout.LayoutParams(0, dp(58), 1f))
-        root.addView(nav, LinearLayout.LayoutParams(-1, dp(68)))
+        bottomNav.addView(navButton("⌂\nHome", "home"), LinearLayout.LayoutParams(0, dp(58), 1f))
+        bottomNav.addView(navButton("◷\nHistory", "history"), LinearLayout.LayoutParams(0, dp(58), 1f))
+        bottomNav.addView(navButton("⚙\nSettings", "settings"), LinearLayout.LayoutParams(0, dp(58), 1f))
+        root.addView(bottomNav, LinearLayout.LayoutParams(-1, dp(68)))
         setContentView(root)
     }
 
@@ -174,6 +175,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         // This also blocks Home/History/Settings/Premium after a cancelled sign-in.
         val destination = if (auth?.currentUser == null && page != "profile") "profile" else page
         currentPage = destination
+        if (::bottomNav.isInitialized) bottomNav.visibility = if (auth?.currentUser == null) View.GONE else View.VISIBLE
         content.removeAllViews()
         val pageView = when (destination) {
             "history" -> historyPage()
@@ -320,24 +322,56 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun profilePage(): View {
         val col = pageColumn()
-        col.addView(text("Your BolPilot", 27f, white, true))
-        col.addView(text("Your assistant, your settings", 14f, muted).apply { setPadding(0, dp(4), 0, dp(18)) })
-        val card = cardColumn()
-        card.addView(text("◉", 42f, cyan, true).apply { gravity = Gravity.CENTER })
-        card.addView(text(signedInName ?: "You're using BolPilot as a guest", 17f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(5)) })
-        card.addView(text(if (auth?.currentUser != null) "Firebase account connected" else "Local mode · sign-in not connected", 13f, muted).apply { gravity = Gravity.CENTER })
-        col.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) })
-        if (auth?.currentUser == null) {
-            col.addView(button("Continue with Google", white, navy) { beginGoogleSignIn() }, LinearLayout.LayoutParams(-1, dp(54)))
-            col.addView(text("Google sign-in uses this app’s Firebase configuration. If sign-in fails, check the SHA fingerprint and Google provider settings in Firebase Console.", 12f, muted).apply { setPadding(dp(4), dp(12), dp(4), dp(12)) })
+        val user = auth?.currentUser
+        if (user == null) {
+            col.addView(text("BolPilot", 34f, white, true))
+            col.addView(text("YOUR PHONE. YOUR VOICE.", 12f, cyan, true).apply { letterSpacing = .14f; setPadding(0, dp(2), 0, dp(22)) })
+            val hero = cardColumn()
+            hero.gravity = Gravity.CENTER
+            hero.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF202D56.toInt(), 0xFF111A35.toInt())).apply { cornerRadius = dp(26).toFloat(); setStroke(dp(1), 0xFF3A527C.toInt()) }
+            hero.setPadding(dp(22), dp(28), dp(22), dp(28))
+            hero.addView(text("✦", 42f, cyan, true).apply { gravity = Gravity.CENTER })
+            hero.addView(text("Welcome to BolPilot", 23f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(8)) })
+            hero.addView(text("Sign in with Google to securely access your voice assistant, profile and settings.", 14f, muted).apply { gravity = Gravity.CENTER })
+            col.addView(hero, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
+            col.addView(button("Continue with Google  →", white, navy) { beginGoogleSignIn() }, LinearLayout.LayoutParams(-1, dp(58)).apply { bottomMargin = dp(12) })
+            col.addView(text("Secure sign-in powered by Firebase", 12f, muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(18)) })
+            col.addView(actionRow("Privacy Policy", "How BolPilot handles your information", "View") { openLegalPage("privacy") })
+            col.addView(actionRow("Terms of Service", "Terms for using BolPilot", "View") { openLegalPage("terms") })
+            col.addView(actionRow("Support", "Get help with sign-in or voice commands", "Contact") { showPage("help") })
         } else {
+            col.addView(text("My profile", 27f, white, true))
+            col.addView(text("Your account and preferences", 14f, muted).apply { setPadding(0, dp(4), 0, dp(18)) })
+            val card = cardColumn()
+            card.addView(text("●", 38f, cyan, true).apply { gravity = Gravity.CENTER })
+            card.addView(text(user.displayName ?: signedInName ?: "BolPilot member", 19f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(4)) })
+            card.addView(text(user.email ?: "Google account connected", 13f, muted).apply { gravity = Gravity.CENTER })
+            col.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) })
+            col.addView(actionRow("Account & security", "Signed in with Google", "Details") {
+                AlertDialog.Builder(this).setTitle("Account details").setMessage(user.email ?: "Google account connected").setPositiveButton("OK", null).show()
+            })
+            col.addView(actionRow("Privacy Policy", "How BolPilot handles your information", "View") { openLegalPage("privacy") })
+            col.addView(actionRow("Terms of Service", "Terms for using BolPilot", "View") { openLegalPage("terms") })
+            col.addView(actionRow("Support & help", "Troubleshoot commands and permissions", "Open") { showPage("help") })
+            col.addView(actionRow("Premium plans", "See future premium options", "View") { showPage("premium") })
             col.addView(button("Sign out", 0xFF3B1B34.toInt(), red) {
-                auth?.signOut(); GoogleSignIn.getClient(this, GoogleSignInOptions.DEFAULT_SIGN_IN).signOut()
-                signedInName = null; showPage("profile")
-            }, LinearLayout.LayoutParams(-1, dp(52)))
+                auth?.signOut()
+                GoogleSignIn.getClient(this, GoogleSignInOptions.DEFAULT_SIGN_IN).signOut()
+                signedInName = null
+                showPage("profile")
+            }, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(14) })
         }
-        col.addView(button("Premium plans", panel2, cyan) { showPage("premium") }, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(10) })
         return wrapScroll(col)
+    }
+
+    private fun openLegalPage(kind: String) {
+        val title = if (kind == "privacy") "Privacy Policy" else "Terms of Service"
+        val body = if (kind == "privacy") {
+            "BolPilot uses Google sign-in to identify your account. Voice commands are processed by Android's speech recognition service, which may send audio to its provider. Command history and preferences are stored locally on this device. This demo does not process payments. Before public release, publish a complete policy describing data retention, deletion, analytics and support contact details."
+        } else {
+            "Use BolPilot only on devices and accounts you are authorized to control. Voice commands can open apps and may lock the screen after you grant Android device-administrator permission. BolPilot does not bypass your PIN, password or biometrics. Payment and subscription features are currently demo-only and do not create a paid plan."
+        }
+        AlertDialog.Builder(this).setTitle(title).setMessage(body).setPositiveButton("Close", null).show()
     }
 
     private fun premiumPage(): View {
@@ -372,7 +406,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val entries = listOf(
             "Voice recognition doesn't start" to "Allow Microphone permission in Android Settings. Make sure the device has a speech recognition service installed.",
             "The app doesn't open the requested app" to "Check that the app is installed and that its package is available on this Android device.",
-            "Google sign-in isn't configured" to "Add the google-services.json for application ID in.examdarpan.vaanix, enable Google in Firebase Authentication, and ensure the Web OAuth client is generated.",
+            "Google sign-in isn't configured" to "Enable Google in Firebase Authentication. Register SHA-1 and SHA-256 for the exact signing key used to build the installed APK, then download a fresh google-services.json. GitHub Actions debug APKs can use a different debug signing key than your laptop build.",
             "Background listening" to "Enable hands-free mode from Home while BolPilot is visible and grant microphone permission. Android keeps a foreground notification while listening. Availability depends on the device speech service, battery settings, and Android restrictions. Say app names or supported commands; this is not a fully offline wake-word engine.",
             "Lock phone by voice" to "Say lock phone. Android asks you to enable BolPilot as a device administrator before it can lock the screen. This does not bypass the PIN, password, or biometric unlock."
         )
