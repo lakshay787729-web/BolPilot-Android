@@ -103,7 +103,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
 
         val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
-        if (!prefs.getBoolean("pro_autopay_active", false)) {
+        if (!prefs.getBoolean("pro_autopay_active", false) &&
+            !prefs.getBoolean("guest_mode", false)) {
             stopSelf()
             return
         }
