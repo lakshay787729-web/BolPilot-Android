@@ -15,10 +15,8 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.text.InputType
-import android.util.Base64
 import android.view.Gravity
 import android.view.View
-import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -26,14 +24,6 @@ import android.widget.*
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
-import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
 
@@ -43,16 +33,18 @@ class MainActivity : Activity() {
     private var setupRecognizer: SpeechRecognizer? = null
     private var liveHeardLabel: TextView? = null
     private var soundVisualizerBar: ProgressBar? = null
+    private var waitingForUpiAppReturn = false
 
     private val RC_GOOGLE_SIGN_IN = 9001
     private val RC_ACCOUNT_PICKER = 9002
 
     // =========================================================================
-    // RAZORPAY LIVE UPI AUTOPAY CREDENTIALS (ENCODE TECHNOLOGIES)
+    // ENCODE TECHNOLOGIES — REAL LIVE RAZORPAY SUBSCRIPTION DETAILS
     // =========================================================================
-    private val RZP_KEY_ID = "rzp_live_YOUR_KEY_ID"       // <-- Put your Razorpay Key ID here
-    private val RZP_KEY_SECRET = "YOUR_KEY_SECRET"        // <-- Put your Razorpay Key Secret here
-    private val RZP_PLAN_ID = "plan_YOUR_PLAN_ID"         // <-- Put your ₹29 Plan ID here
+    private val RZP_PLAN_NAME = "ENCODE TECHNOLOGIES"
+    private val RZP_PLAN_ID = "plan_Tq9Re1je5QlhiE"
+    private val RZP_SUBSCRIPTION_ID = "sub_Tq9W0sy8q51e64"
+    private val RZP_SUBSCRIPTION_LINK = "https://rzp.io/rzp/ni1yHV1N"
 
     private var selectedUpiApp = "GPay"
     private var postLoginAction = "START_TRIAL"
@@ -98,6 +90,12 @@ class MainActivity : Activity() {
             }
         } catch (e: Exception) {}
 
+        if (waitingForUpiAppReturn) {
+            waitingForUpiAppReturn = false
+            showMandateVerificationConfirmationDialog()
+            return
+        }
+
         if (currentScreen == "PERMISSIONS") showPermissionsScreen()
         else if (currentScreen == "DASHBOARD") showRingbookDashboard()
     }
@@ -109,15 +107,23 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        if (!prefs.getBoolean("pro_autopay_active", false)) {
+            if (currentScreen == "SIGN_IN" || currentScreen == "LEGAL_PUBLIC") {
+                showRingbookTrialPaywall()
+            } else {
+                moveTaskToBack(true)
+            }
+            return
+        }
+
         when (currentScreen) {
-            "SIGN_IN" -> showRingbookTrialPaywall()
             "CLAP_SETTINGS", "VOICE_LOCK_INTRO", "PERMISSIONS", "PROFILE" -> {
                 resumeBackgroundService()
                 showRingbookDashboard()
             }
             "CALIBRATE" -> showClapToFindSettingsScreen()
             "VOICE_LOCK_STEP" -> showVoiceLockIntroScreen()
-            "ACCOUNT_SETTINGS", "LEGAL_PAGE" -> showProfileScreen()
+            "ACCOUNT_SETTINGS", "LEGAL_PAGE", "INVOICE_PAGE" -> showProfileScreen()
             else -> moveTaskToBack(true)
         }
     }
@@ -146,6 +152,7 @@ class MainActivity : Activity() {
     }
 
     private fun safeStartAssistantService() {
+        if (!prefs.getBoolean("pro_autopay_active", false)) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 102)
@@ -169,7 +176,7 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // SCREEN 1: RINGBOOK-STYLE ₹1 TRIAL PAYWALL SCREEN
+    // SCREEN 1: RINGBOOK-STYLE ONBOARDING & RAZORPAY AUTOPAY PAYWALL
     // =========================================================================
     private fun showRingbookTrialPaywall() {
         currentScreen = "TRIAL_PAYWALL"
@@ -189,12 +196,11 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
         }
 
-        // Top Dark Hero Preview Container (Matches Ringbook)
         val darkHero = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             background = createCard("#080D1A", "#1E293B", 48f)
-            setPadding(50, 95, 50, 95)
+            setPadding(50, 90, 50, 90)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         darkHero.addView(TextView(this).apply {
@@ -218,7 +224,6 @@ class MainActivity : Activity() {
         })
         content.addView(darkHero)
 
-        // Floating White Headline Card
         val titleCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -236,8 +241,8 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         })
         titleCard.addView(TextView(this).apply {
-            text = "Start your trial today."
-            textSize = 15.5f
+            text = "Start your trial today • Then ₹49/month"
+            textSize = 15f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#0284C7"))
             gravity = Gravity.CENTER
@@ -246,31 +251,53 @@ class MainActivity : Activity() {
         content.addView(titleCard)
 
         content.addView(TextView(this).apply {
-            text = "Unlock 24/7 hands-free app opener, voice lock & phone finding tools."
+            text = "Unlock smarter hands-free phone control and quick phone finding tools."
             textSize = 14f
             setTextColor(Color.parseColor("#64748B"))
             gravity = Gravity.CENTER
             setPadding(20, 30, 20, 30)
         })
 
-        // 2 Feature Cards side-by-side (Voice Lock & Unlock | Clap & Siri OS)
         val featRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        featRow.addView(createPaywallFeatureTile("🎙️", "Voice Lock\n& Siri OS"))
+        featRow.addView(createPaywallFeatureTile("🎙️", "Voice Lock\n& Unlock"))
         featRow.addView(Space(this).apply { minimumWidth = 24 })
         featRow.addView(createPaywallFeatureTile("👏", "Clap to\nFind Phone"))
         content.addView(featRow)
 
         content.addView(TextView(this).apply {
-            text = "By clicking Start Free Trial you consent to a ₹1 verification payment and authorize a UPI AutoPay mandate of ₹29/month after your 3-day trial with Encode Technologies. Cancel anytime."
+            text = "By clicking Start Free Trial you expressly consent to a verification payment and authorize a UPI AutoPay mandate (Plan: $RZP_PLAN_ID) with $RZP_PLAN_NAME. A recurring fee of ₹49.00 will be automatically debited every month to continue availing of the service. Pause or cancel anytime."
             textSize = 11.5f
             setTextColor(Color.parseColor("#94A3B8"))
             gravity = Gravity.CENTER
-            setPadding(15, 35, 15, 20)
+            setPadding(15, 32, 15, 16)
         })
+
+        // Play Store Compliance Links on Paywall (Privacy • Terms • Refund Policy • Contact Us)
+        val legalLinksRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 5, 0, 15)
+        }
+        val policies = listOf(
+            "Privacy" to "Welcome to BolPilot (by Encode Technologies). Voice commands and lock phrases are processed locally on your device. Account email and subscription status are securely stored for authentication.",
+            "Terms" to "BolPilot provides 24/7 hands-free app opening, voice lock shield, and clap finder tools under Encode Technologies (Udyam: UDYAM-RJ-04-0039772).",
+            "Refund Policy" to "Subscriptions are billed monthly at ₹49/month via Razorpay UPI AutoPay. You can pause or cancel your mandate anytime from your UPI app before the next billing cycle.",
+            "Contact Us" to "Merchant Legal Name: Encode Technologies\nProprietor: Lokesh Meena\nEmail: lokesh636780@gmail.com\nAddress: Jeerod, Atru, Baran, Rajasthan - 325207"
+        )
+        policies.forEachIndexed { idx, (label, textBody) ->
+            legalLinksRow.addView(TextView(this).apply {
+                text = if (idx < policies.size - 1) "$label  •  " else label
+                textSize = 12f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#64748B"))
+                setOnClickListener { showPublicLegalScreen(label, textBody) }
+            })
+        }
+        content.addView(legalLinksRow)
 
         scroll.addView(content)
 
-        // Bottom Sticky Bar (Selected UPI App + Green Start Free Trial Button + Sign In)
+        // Sticky Bottom Action Bar
         val bottomBar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
@@ -318,7 +345,7 @@ class MainActivity : Activity() {
             setOnClickListener {
                 postLoginAction = "START_TRIAL"
                 if (prefs.getBoolean("user_logged_in", false)) {
-                    launchRazorpayAutopay()
+                    openLiveRazorpaySubscriptionCheckout()
                 } else {
                     showRingbookSignInScreen()
                 }
@@ -374,7 +401,6 @@ class MainActivity : Activity() {
 
     // =========================================================================
     // SCREEN 2: RINGBOOK-STYLE "WELCOME TO BOLPILOT" SIGN-IN SCREEN
-    // (100% Fixed Google Account Picker — Never fails with resultCode=0!)
     // =========================================================================
     private fun showRingbookSignInScreen() {
         currentScreen = "SIGN_IN"
@@ -452,7 +478,6 @@ class MainActivity : Activity() {
         mainContainer.addView(root)
     }
 
-    // Uses Android's native AccountManager chooser first so it NEVER fails with SHA-1 resultCode=0 on GitHub APKs!
     @Suppress("DEPRECATION")
     private fun launchBulletproofGooglePicker() {
         try {
@@ -478,10 +503,8 @@ class MainActivity : Activity() {
         if (requestCode == RC_ACCOUNT_PICKER) {
             val email = data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME) ?: ""
             if (email.isNotEmpty()) {
-                val name = deriveNameFromEmail(email)
-                onGoogleAccountSelected(name, email)
+                onGoogleAccountSelected(deriveNameFromEmail(email), email)
             } else {
-                // Fallback to GoogleSignIn if dismissed
                 try {
                     val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).requestEmail().build()
                     startActivityForResult(GoogleSignIn.getClient(this, gso).signInIntent, RC_GOOGLE_SIGN_IN)
@@ -495,7 +518,6 @@ class MainActivity : Activity() {
                 val name = acct?.displayName ?: deriveNameFromEmail(email)
                 onGoogleAccountSelected(name, email)
             } catch (e: Exception) {
-                // Even if SHA-1 mismatch occurs on GitHub debug build, show instant account confirmation dialog instead of failing!
                 showEmailLoginDialog()
             }
         }
@@ -508,8 +530,8 @@ class MainActivity : Activity() {
             setPadding(45, 35, 45, 35)
         }
         AlertDialog.Builder(this)
-            .setTitle("Continue with Google Account")
-            .setMessage("Confirm your Google email to sync your BolPilot profile & subscription:")
+            .setTitle("Sign in to BolPilot")
+            .setMessage("Enter your Google email to continue:")
             .setView(input)
             .setPositiveButton("Continue") { d, _ ->
                 val em = input.text.toString().trim().ifEmpty { "lokesh636780@gmail.com" }
@@ -526,7 +548,6 @@ class MainActivity : Activity() {
     }
 
     private fun onGoogleAccountSelected(name: String, email: String) {
-        // Show Ringbook-style "Allow Google to sign you in to BolPilot" confirmation popup
         AlertDialog.Builder(this)
             .setTitle("Allow Google to sign you in to BolPilot")
             .setMessage("$email\n\nBy continuing, Google will share your name, email address and profile picture with BolPilot.")
@@ -538,13 +559,27 @@ class MainActivity : Activity() {
                     .putBoolean("user_logged_in", true)
                     .apply()
 
-                if (postLoginAction == "START_TRIAL" && !prefs.getBoolean("pro_autopay_active", false)) {
-                    launchRazorpayAutopay()
-                } else if (prefs.getBoolean("pro_autopay_active", false)) {
-                    safeStartAssistantService()
-                    showRingbookDashboard()
+                val subscribedEmail = prefs.getString("subscribed_email", "") ?: ""
+                val isAlreadySubscribed = prefs.getBoolean("pro_autopay_active", false) &&
+                        subscribedEmail.equals(email, ignoreCase = true)
+
+                if (postLoginAction == "EXISTING_USER") {
+                    if (isAlreadySubscribed) {
+                        safeStartAssistantService()
+                        showRingbookDashboard()
+                    } else {
+                        AlertDialog.Builder(this)
+                            .setTitle("Subscription Required")
+                            .setMessage("No active UPI AutoPay mandate found for $email under $RZP_PLAN_NAME.\n\nPlease complete your UPI AutoPay setup to unlock BolPilot.")
+                            .setPositiveButton("Setup UPI AutoPay") { dlg, _ ->
+                                dlg.dismiss()
+                                openLiveRazorpaySubscriptionCheckout()
+                            }
+                            .setNegativeButton("Cancel", null)
+                            .show()
+                    }
                 } else {
-                    launchRazorpayAutopay()
+                    openLiveRazorpaySubscriptionCheckout()
                 }
             }
             .setNegativeButton("Cancel", null)
@@ -552,224 +587,136 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // RAZORPAY LIVE UPI AUTOPAY ENGINE (₹1 Trial + ₹29/Month Mandate)
+    // LIVE RAZORPAY SUBSCRIPTION CHECKOUT (https://rzp.io/rzp/ni1yHV1N)
     // =========================================================================
-    @Suppress("DEPRECATION")
-    private fun launchRazorpayAutopay() {
-        val name = prefs.getString("user_name", "Lokesh Meena") ?: "Lokesh Meena"
-        val email = prefs.getString("user_email", "lokesh636780@gmail.com") ?: "lokesh636780@gmail.com"
-
-        // If user hasn't inserted their live Razorpay keys yet, allow instant test activation or live checkout if keys are set
-        if (RZP_KEY_ID.contains("YOUR_KEY_ID")) {
-            openRazorpayMandateSimulatorOrWebCheckout(
-                subscriptionId = "",
-                orderId = "",
-                name = name,
-                email = email
-            )
-            return
-        }
-
-        val pd = ProgressDialog(this).apply {
-            setMessage("Setting up ₹1 UPI Autopay Mandate with Encode Technologies...")
-            setCancelable(false)
-            show()
-        }
-
-        thread {
-            var subId = ""
-            var orderId = ""
-            try {
-                val authHeader = "Basic " + Base64.encodeToString("$RZP_KEY_ID:$RZP_KEY_SECRET".toByteArray(), Base64.NO_WRAP)
-
-                // 1. Create or ensure ₹29 Monthly Plan exists if RZP_PLAN_ID is not hardcoded
-                var activePlanId = RZP_PLAN_ID
-                if (activePlanId.contains("YOUR_PLAN_ID")) {
-                    val pUrl = URL("https://api.razorpay.com/v1/plans")
-                    val pConn = (pUrl.openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        setRequestProperty("Content-Type", "application/json")
-                        setRequestProperty("Authorization", authHeader)
-                        doOutput = true
-                    }
-                    val pBody = JSONObject().apply {
-                        put("period", "monthly")
-                        put("interval", 1)
-                        put("item", JSONObject().apply {
-                            put("name", "BolPilot Pro Monthly")
-                            put("amount", 2900) // ₹29.00 in paise
-                            put("currency", "INR")
-                            put("description", "Hands-Free Voice OS & Voice Lock Shield")
-                        })
-                    }
-                    OutputStreamWriter(pConn.outputStream).use { it.write(pBody.toString()) }
-                    val pResp = BufferedReader(InputStreamReader(if (pConn.responseCode in 200..299) pConn.inputStream else pConn.errorStream)).use { it.readText() }
-                    activePlanId = JSONObject(pResp).optString("id", "")
-                }
-
-                // 2. Create Razorpay Subscription with ₹1 Upfront Trial Addon & Start Date +3 Days
-                if (activePlanId.startsWith("plan_")) {
-                    val sUrl = URL("https://api.razorpay.com/v1/subscriptions")
-                    val sConn = (sUrl.openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        setRequestProperty("Content-Type", "application/json")
-                        setRequestProperty("Authorization", authHeader)
-                        doOutput = true
-                    }
-                    val startAtSec = (System.currentTimeMillis() / 1000L) + (3 * 24 * 3600L)
-                    val sBody = JSONObject().apply {
-                        put("plan_id", activePlanId)
-                        put("total_count", 120)
-                        put("quantity", 1)
-                        put("start_at", startAtSec)
-                        put("customer_notify", 1)
-                        put("addons", JSONArray().put(JSONObject().apply {
-                            put("item", JSONObject().apply {
-                                put("name", "3-Day Trial Verification Fee")
-                                put("amount", 100) // ₹1.00 upfront
-                                put("currency", "INR")
-                            })
-                        }))
-                    }
-                    OutputStreamWriter(sConn.outputStream).use { it.write(sBody.toString()) }
-                    val sResp = BufferedReader(InputStreamReader(if (sConn.responseCode in 200..299) sConn.inputStream else sConn.errorStream)).use { it.readText() }
-                    subId = JSONObject(sResp).optString("id", "")
-                }
-
-                // 3. Fallback: Create ₹1 Razorpay Order if Subscription API returns empty
-                if (subId.isEmpty()) {
-                    val oUrl = URL("https://api.razorpay.com/v1/orders")
-                    val oConn = (oUrl.openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        setRequestProperty("Content-Type", "application/json")
-                        setRequestProperty("Authorization", authHeader)
-                        doOutput = true
-                    }
-                    val oBody = JSONObject().apply {
-                        put("amount", 100)
-                        put("currency", "INR")
-                        put("receipt", "rcpt_${System.currentTimeMillis()}")
-                    }
-                    OutputStreamWriter(oConn.outputStream).use { it.write(oBody.toString()) }
-                    val oResp = BufferedReader(InputStreamReader(if (oConn.responseCode in 200..299) oConn.inputStream else oConn.errorStream)).use { it.readText() }
-                    orderId = JSONObject(oResp).optString("id", "")
-                }
-            } catch (e: Exception) {}
-
-            runOnUiThread {
-                pd.dismiss()
-                openRazorpayMandateSimulatorOrWebCheckout(subId, orderId, name, email)
-            }
-        }
-    }
-
     @SuppressLint("SetJavaScriptEnabled")
-    private fun openRazorpayMandateSimulatorOrWebCheckout(subscriptionId: String, orderId: String, name: String, email: String) {
+    private fun openLiveRazorpaySubscriptionCheckout() {
         val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+        }
+
+        // Top Bar inside Checkout
+        val topHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(40, 45, 40, 30)
+            setBackgroundColor(Color.parseColor("#0F172A"))
+        }
+        topHeader.addView(TextView(this).apply {
+            text = "‹  ENCODE TECHNOLOGIES  •  UPI AUTOPAY"
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { dialog.dismiss() }
+        })
+        topHeader.addView(TextView(this).apply {
+            text = "Open in $selectedUpiApp"
+            textSize = 12f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            setPadding(28, 14, 28, 14)
+            background = createCard("#16A34A", "#16A34A", 40f)
+            setOnClickListener {
+                try {
+                    waitingForUpiAppReturn = true
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(RZP_SUBSCRIPTION_LINK)))
+                } catch (e: Exception) {}
+            }
+        })
+
         val webView = WebView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-            addJavascriptInterface(object {
-                @JavascriptInterface
-                fun onPaymentSuccess(paymentId: String) {
-                    runOnUiThread {
-                        dialog.dismiss()
-                        prefs.edit()
-                            .putBoolean("pro_autopay_active", true)
-                            .putString("rzp_payment_id", paymentId)
-                            .apply()
-                        Toast.makeText(this@MainActivity, "₹1 UPI Autopay Mandate Active!", Toast.LENGTH_LONG).show()
-                        safeStartAssistantService()
-                        showRingbookDashboard()
-                    }
-                }
-            }, "AndroidBridge")
+            settings.userAgentString = settings.userAgentString + " BolPilotAndroid/1.0"
 
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val u = request?.url?.toString() ?: return false
-                    if (u.startsWith("upi://") || u.startsWith("phonepe://") || u.startsWith("tez://") || u.startsWith("paytmmp://") || u.startsWith("intent://")) {
+
+                    // Automatically launch GPay / PhonePe / Paytm when Razorpay triggers UPI Mandate intent!
+                    if (u.startsWith("upi://") || u.startsWith("phonepe://") ||
+                        u.startsWith("tez://") || u.startsWith("gpay://") ||
+                        u.startsWith("paytmmp://") || u.startsWith("intent://")) {
                         try {
-                            val intent = if (u.startsWith("intent://")) Intent.parseUri(u, Intent.URI_INTENT_SCHEME)
-                            else Intent(Intent.ACTION_VIEW, Uri.parse(u))
+                            val intent = if (u.startsWith("intent://")) {
+                                Intent.parseUri(u, Intent.URI_INTENT_SCHEME)
+                            } else {
+                                Intent(Intent.ACTION_VIEW, Uri.parse(u))
+                            }
+                            waitingForUpiAppReturn = true
+                            dialog.dismiss()
                             startActivity(intent)
-                        } catch (e: Exception) {}
+                        } catch (e: Exception) {
+                            Toast.makeText(this@MainActivity, "Please select another UPI option", Toast.LENGTH_SHORT).show()
+                        }
+                        return true
+                    }
+
+                    // Detect Razorpay payment success callback
+                    if (u.contains("razorpay_payment_id=") || u.contains("razorpay_subscription_id=") || u.contains("status=authenticated") || u.contains("status=active")) {
+                        dialog.dismiss()
+                        activateUserSubscription()
                         return true
                     }
                     return false
                 }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    val currentUrl = url ?: ""
+                    if (currentUrl.contains("razorpay_payment_id=") || currentUrl.contains("status=authenticated") || currentUrl.contains("status=active")) {
+                        dialog.dismiss()
+                        activateUserSubscription()
+                    }
+                }
             }
         }
 
-        val hasRealKey = !RZP_KEY_ID.contains("YOUR_KEY_ID")
-        val html = if (hasRealKey) {
-            val subOrOrderField = if (subscriptionId.isNotEmpty()) "subscription_id: '$subscriptionId',"
-            else if (orderId.isNotEmpty()) "order_id: '$orderId'," else ""
-            """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-            </head>
-            <body style="background:#F7F8FA;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-                <script>
-                    var options = {
-                        key: '$RZP_KEY_ID',
-                        amount: '100',
-                        currency: 'INR',
-                        name: 'Encode Technologies',
-                        description: 'BolPilot 3-Day Trial + ₹29/mo Autopay',
-                        $subOrOrderField
-                        prefill: { name: '$name', email: '$email', contact: '9876543210' },
-                        theme: { color: '#16A34A' },
-                        handler: function (response) {
-                            AndroidBridge.onPaymentSuccess(response.razorpay_payment_id || 'ACTIVE');
-                        }
-                    };
-                    var rzp = new Razorpay(options);
-                    rzp.open();
-                </script>
-            </body>
-            </html>
-            """.trimIndent()
-        } else {
-            // Instant UPI Autopay Mandate Screen (Matches Screenshot 1000284707.jpg) if keys are not pasted yet
-            """
-            <!DOCTYPE html>
-            <html>
-            <head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-            <body style="background:#FFFFFF;font-family:sans-serif;padding:28px;margin:0;color:#0F172A;display:flex;flex-direction:column;height:92vh;justify-content:space-between;">
-                <div style="text-align:center;margin-top:20px;">
-                    <div style="width:56px;height:56px;border-radius:28px;background:#DBEAFE;color:#1D4ED8;display:inline-flex;align-items:center;justify-content:center;font-weight:bold;font-size:20px;">ET</div>
-                    <h2 style="margin:14px 0 4px 0;">Encode Technologies</h2>
-                    <div style="color:#64748B;font-size:13px;">Razorpay Verified UPI AutoPay</div>
-                    <div style="margin-top:28px;color:#475569;font-size:14px;">Amount to be paid now</div>
-                    <div style="font-size:48px;font-weight:800;margin:6px 0 24px 0;">₹1</div>
-                    <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:18px;padding:20px;text-align:left;font-size:14px;line-height:1.8;">
-                        <div style="display:flex;justify-content:space-between;"><span>Maximum automatic deduction</span><b>₹29 / month</b></div>
-                        <div style="display:flex;justify-content:space-between;"><span>Trial Period</span><b>3 Days (₹1)</b></div>
-                        <div style="display:flex;justify-content:space-between;"><span>Selected UPI App</span><b>$selectedUpiApp</b></div>
-                        <div style="margin-top:12px;font-size:12px;color:#64748B;">We'll notify you 24 hrs before each deduction. Pause or cancel anytime.</div>
-                    </div>
-                </div>
-                <div>
-                    <button onclick="AndroidBridge.onPaymentSuccess('RZP_MANDATE_ACTIVE')" style="width:100%;padding:18px;background:#0284C7;color:white;border:none;border-radius:30px;font-size:16px;font-weight:bold;">Pay ₹1 & Setup Automatic</button>
-                    <div style="text-align:center;font-size:12px;color:#64748B;margin-top:10px;">Note: Only ₹1 will be deducted from your account today</div>
-                </div>
-            </body>
-            </html>
-            """.trimIndent()
-        }
+        // Load your REAL Razorpay Subscription Link (sub_Tq9W0sy8q51e64 / plan_Tq9Re1je5QlhiE)
+        webView.loadUrl(RZP_SUBSCRIPTION_LINK)
 
-        webView.loadDataWithBaseURL("https://api.razorpay.com", html, "text/html", "UTF-8", null)
-        dialog.setContentView(webView)
+        root.addView(topHeader)
+        root.addView(webView)
+        dialog.setContentView(root)
         dialog.show()
+    }
+
+    private fun showMandateVerificationConfirmationDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Verify UPI AutoPay Mandate")
+            .setMessage("Did you approve the ENCODE TECHNOLOGIES UPI AutoPay mandate ($RZP_SUBSCRIPTION_ID) in your UPI app?")
+            .setCancelable(false)
+            .setPositiveButton("Yes, Approved — Unlock App") { d, _ ->
+                d.dismiss()
+                activateUserSubscription()
+            }
+            .setNegativeButton("Retry Payment") { d, _ ->
+                d.dismiss()
+                openLiveRazorpaySubscriptionCheckout()
+            }
+            .show()
+    }
+
+    private fun activateUserSubscription() {
+        val email = prefs.getString("user_email", "lokesh636780@gmail.com") ?: "lokesh636780@gmail.com"
+        prefs.edit()
+            .putBoolean("pro_autopay_active", true)
+            .putString("subscribed_email", email)
+            .putString("rzp_sub_id", RZP_SUBSCRIPTION_ID)
+            .putString("rzp_plan_id", RZP_PLAN_ID)
+            .putBoolean("master_listening_on", true)
+            .apply()
+        Toast.makeText(this, "UPI AutoPay Active! Welcome to BolPilot Premium.", Toast.LENGTH_LONG).show()
+        safeStartAssistantService()
+        showRingbookDashboard()
     }
 
     // =========================================================================
     // SCREEN 3: RINGBOOK-STYLE CLEAN WHITE HOME DASHBOARD
-    // (No Quick Command Chips, No Tap-to-Talk Orb — Pure Automatic Background OS!)
     // =========================================================================
     private fun showRingbookDashboard() {
         currentScreen = "DASHBOARD"
@@ -786,7 +733,6 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.parseColor("#F7F8FA"))
         }
 
-        // Top Bar: "BolPilot" on left + Profile Icon button on right (Exact Ringbook layout)
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -816,7 +762,7 @@ class MainActivity : Activity() {
             setPadding(45, 10, 45, 60)
         }
 
-        // 1. Top Status Banner Card (Dark when active, White when inactive — just like Ringbook!)
+        // 1. Top Status Banner Card (Dark when listening, White when inactive)
         val statusCard = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -851,7 +797,7 @@ class MainActivity : Activity() {
             setTextColor(if (isMasterOn) Color.WHITE else Color.parseColor("#0F172A"))
         })
         liveHeardLabel = TextView(this).apply {
-            text = if (isMasterOn) "Hands-Free Siri OS & Voice Lock active" else "Enable a feature below whenever you need it."
+            text = if (isMasterOn) "Voice Lock & Hands-Free Siri OS active" else "Enable a feature below whenever you need it."
             textSize = 13.5f
             setTextColor(if (isMasterOn) Color.parseColor("#A1A1AA") else Color.parseColor("#64748B"))
             setPadding(0, 6, 0, 0)
@@ -861,7 +807,7 @@ class MainActivity : Activity() {
         content.addView(statusCard)
         content.addView(Space(this).apply { minimumHeight = 28 })
 
-        // 2. Hands-Free Siri Voice OS Card (Opens all installed apps, YouTube/Google search, Back/Home)
+        // 2. Hands-Free Siri Voice OS Card
         val siriCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = createCard("#FFFFFF", "#E2E8F0", 42f)
@@ -878,7 +824,7 @@ class MainActivity : Activity() {
                 textSize = 16.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
             })
             addView(TextView(context).apply {
-                text = "Say 'Open [Any App]', 'Play song on YouTube', 'Search Google', or 'Go to Home' even when app is closed."
+                text = "Opens any installed app ('Open YouTube', 'Open Rapido'), plays YouTube songs, searches Google & goes Home in background."
                 textSize = 13f; setTextColor(Color.parseColor("#64748B")); setPadding(0, 6, 0, 0)
             })
         })
@@ -891,7 +837,7 @@ class MainActivity : Activity() {
         content.addView(siriCard)
         content.addView(Space(this).apply { minimumHeight = 28 })
 
-        // 3. Clap to Find Card (Exact Ringbook layout with Settings & Calibration sub-row)
+        // 3. Clap to Find Card
         val clapCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = createCard("#FFFFFF", "#E2E8F0", 42f)
@@ -925,7 +871,7 @@ class MainActivity : Activity() {
         content.addView(clapCard)
         content.addView(Space(this).apply { minimumHeight = 28 })
 
-        // 4. Voice Lock Card (Exact Ringbook layout with Set up / Manage command)
+        // 4. Voice Lock Card
         val lockCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = createCard("#FFFFFF", "#E2E8F0", 42f)
@@ -968,7 +914,7 @@ class MainActivity : Activity() {
         content.addView(lockCard)
         content.addView(Space(this).apply { minimumHeight = 28 })
 
-        // 5. Background Listening Permissions Card (If any permission needs attention)
+        // 5. Background Listening Permissions Card
         if (!hasAllCorePermissions()) {
             val permCard = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -986,7 +932,7 @@ class MainActivity : Activity() {
                     textSize = 15.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
                 })
                 addView(TextView(context).apply {
-                    text = "Allow unrestricted battery & overlay for 24/7 Siri detection."
+                    text = "Allow unrestricted battery use for reliable detection."
                     textSize = 13f; setTextColor(Color.parseColor("#64748B")); setPadding(0, 6, 0, 0)
                 })
             })
@@ -1007,7 +953,7 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // SCREEN 4: RINGBOOK-STYLE "CLAP TO FIND" & CALIBRATION SCREENS
+    // SCREEN 4: CLAP TO FIND SETTINGS & CALIBRATION
     // =========================================================================
     private fun showClapToFindSettingsScreen() {
         currentScreen = "CLAP_SETTINGS"
@@ -1039,13 +985,11 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f) }
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(45, 10, 45, 60) }
 
-        // Background Permissions Row
         content.addView(createSubRow("🛡️", "Background permissions", if (hasAllCorePermissions()) "All set" else "Tap to review") {
             showPermissionsScreen()
         })
         content.addView(Space(this).apply { minimumHeight = 30 })
 
-        // Detection Card
         val detCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = createCard("#FFFFFF", "#E2E8F0", 42f)
@@ -1082,7 +1026,6 @@ class MainActivity : Activity() {
         detCard.addView(sensRow)
         detCard.addView(Space(this).apply { minimumHeight = 30 })
 
-        // Claps required stepper
         var clapsReq = prefs.getInt("claps_required", 2)
         val clapsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         clapsRow.addView(LinearLayout(this).apply {
@@ -1106,7 +1049,6 @@ class MainActivity : Activity() {
         detCard.addView(clapsRow)
         detCard.addView(Space(this).apply { minimumHeight = 25 })
 
-        // Whistle detection & Screen off toggles
         detCard.addView(createToggleRow("Whistle detection", "Also respond to a whistle", prefs.getBoolean("whistle_detect", true)) {
             prefs.edit().putBoolean("whistle_detect", it).apply()
         })
@@ -1117,7 +1059,6 @@ class MainActivity : Activity() {
         content.addView(detCard)
         content.addView(Space(this).apply { minimumHeight = 28 })
 
-        // Alert Settings Card
         val alertCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = createCard("#FFFFFF", "#E2E8F0", 42f)
@@ -1137,7 +1078,6 @@ class MainActivity : Activity() {
         content.addView(alertCard)
         content.addView(Space(this).apply { minimumHeight = 28 })
 
-        // Test Alert & Calibrate Buttons
         content.addView(Button(this).apply {
             text = "🔔   Test alert"
             textSize = 15.5f; isAllCaps = false; setTypeface(null, Typeface.BOLD); setTextColor(Color.WHITE)
@@ -1217,7 +1157,7 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // SCREEN 5: RINGBOOK-STYLE 3-STEP VOICE LOCK ENROLLMENT WIZARD
+    // SCREEN 5: 3-STEP VOICE LOCK ENROLLMENT WIZARD
     // =========================================================================
     private fun showVoiceLockIntroScreen() {
         currentScreen = "VOICE_LOCK_INTRO"
@@ -1281,7 +1221,6 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
         }
 
-        // Top 3-bar progress indicator
         val progRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, 0, 0, 30) }
         for (i in 1..3) {
             progRow.addView(View(this).apply {
@@ -1446,7 +1385,7 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // SCREEN 6: RINGBOOK-STYLE PERMISSIONS CHECKLIST SCREEN
+    // SCREEN 6: PERMISSIONS CHECKLIST SCREEN
     // =========================================================================
     @SuppressLint("BatteryLife")
     private fun showPermissionsScreen() {
@@ -1465,7 +1404,7 @@ class MainActivity : Activity() {
             setOnClickListener { showRingbookDashboard() }
         })
         root.addView(TextView(this).apply {
-            text = "BolPilot runs in the background so it can open apps & respond even when your screen is locked."
+            text = "BolPilot runs in the background so it can respond even when your screen is locked."
             textSize = 14f; setTextColor(Color.parseColor("#64748B"))
             setPadding(0, 0, 0, 35)
         })
@@ -1476,174 +1415,323 @@ class MainActivity : Activity() {
         val hasOvr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(this) else true
 
         val listCol = LinearLayout(this).apply {
-
-            val items = listOf(
-                "Microphone access" to hasMic,
-                "Ignore battery optimization" to hasBat,
-                "Display over other apps" to hasOvr
-            )
-            items.forEach { (label, granted) ->
-                addView(LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    background = createCard("#FFFFFF", "#E2E8F0", 28f)
-                    setPadding(30, 28, 30, 28)
-                    addView(TextView(this@MainActivity).apply {
-                        text = label
-                        textSize = 15f
-                        setTextColor(Color.parseColor("#0F172A"))
-                    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-                    addView(TextView(this@MainActivity).apply {
-                        text = if (granted) "Granted" else "Set up"
-                        textSize = 13f
-                        setTypeface(null, Typeface.BOLD)
-                        setTextColor(if (granted) Color.parseColor("#15803D") else Color.parseColor("#1D4ED8"))
-                    })
-                    setOnClickListener {
-                        when (label) {
-                            "Microphone access" -> requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 102)
-                            "Ignore battery optimization" -> {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                    try {
-                                        startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
-                                    } catch (_: Exception) {
-                                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                                    }
-                                }
-                            }
-                            "Display over other apps" -> {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-                                }
-                            }
-                        }
-                    }
-                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                    bottomMargin = 18
-                })
-            }
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         }
-        root.addView(listCol, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        listCol.addView(createPermissionCard("🎙️", "Microphone", "Required for clap & voice detection", hasMic) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA), 101)
+            }
+        })
+        listCol.addView(Space(this).apply { minimumHeight = 20 })
+        listCol.addView(createPermissionCard("🔋", "Unrestricted battery", "Stops Android from killing listening", hasBat) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }
+            }
+        })
+        listCol.addView(Space(this).apply { minimumHeight = 20 })
+        listCol.addView(createPermissionCard("🛡️", "Display over other apps", "Required to launch apps & show voice lock screen", hasOvr) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
+        })
+
+        root.addView(listCol)
         root.addView(Button(this).apply {
-            text = "Done"
-            isAllCaps = false
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            background = createCard("#18181B", "#18181B", 50f)
-            setPadding(30, 28, 30, 28)
-            setOnClickListener { showRingbookDashboard() }
-        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            text = "Continue"
+            textSize = 16f; isAllCaps = false; setTypeface(null, Typeface.BOLD); setTextColor(Color.WHITE)
+            setPadding(40, 38, 40, 38)
+            background = createCard("#18181B", "#18181B", 60f)
+            setOnClickListener {
+                safeStartAssistantService()
+                showRingbookDashboard()
+            }
+        })
         mainContainer.addView(root)
     }
 
+    private fun createPermissionCard(icon: String, title: String, sub: String, granted: Boolean, onAllow: () -> Unit): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 38f)
+            setPadding(40, 38, 40, 38)
+            addView(createRoundBadge(icon))
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(28, 0, 18, 0)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(context).apply { text = title; textSize = 15.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")) })
+                addView(TextView(context).apply { text = sub; textSize = 13f; setTextColor(Color.parseColor("#64748B")); setPadding(0, 4, 0, 0) })
+            })
+            addView(TextView(context).apply {
+                text = if (granted) "✓" else "Allow"
+                textSize = 13.5f; setTypeface(null, Typeface.BOLD)
+                setTextColor(if (granted) Color.WHITE else Color.parseColor("#0F172A"))
+                setPadding(30, 16, 30, 16)
+                background = createCard(if (granted) "#18181B" else "#FFFFFF", "#CBD5E1", 50f)
+                if (!granted) setOnClickListener { onAllow() }
+            })
+        }
+    }
+
+    // =========================================================================
+    // SCREEN 7: GOOGLE PLAY STORE COMPLIANT PROFILE & LEGAL PAGES
+    // =========================================================================
     private fun showProfileScreen() {
-        showRingbookSignInScreen()
-    }
+        currentScreen = "PROFILE"
+        mainContainer.removeAllViews()
 
-    private fun createCard(fill: String, stroke: String, radiusDp: Float): GradientDrawable {
-        return GradientDrawable().apply {
-            setColor(Color.parseColor(fill))
-            cornerRadius = radiusDp * resources.displayMetrics.density
-            setStroke((resources.displayMetrics.density).toInt().coerceAtLeast(1), Color.parseColor(stroke))
+        val name = prefs.getString("user_name", "Lokesh Meena") ?: "Lokesh Meena"
+        val email = prefs.getString("user_email", "lokesh636780@gmail.com") ?: "lokesh636780@gmail.com"
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#F7F8FA"))
         }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(45, 100, 45, 20)
+        }
+        header.addView(TextView(this).apply {
+            text = "‹   Profile"
+            textSize = 22f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+            setOnClickListener { showRingbookDashboard() }
+        })
+
+        val scroll = ScrollView(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f) }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(45, 10, 45, 60); gravity = Gravity.CENTER_HORIZONTAL }
+
+        content.addView(createRoundBadge("👤"))
+        content.addView(TextView(this).apply { text = name; textSize = 22f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")); setPadding(0, 16, 0, 4) })
+        content.addView(TextView(this).apply { text = email; textSize = 14f; setTextColor(Color.parseColor("#64748B")); setPadding(0, 0, 0, 30) })
+
+        val premCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = createCard("#FFFFFF", "#18181B", 38f)
+            setPadding(45, 38, 45, 38)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        premCard.addView(createRoundBadge("★"))
+        premCard.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(28, 0, 0, 0)
+            addView(TextView(context).apply { text = "BolPilot Premium"; textSize = 16.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")) })
+            addView(TextView(context).apply { text = "Monthly plan • ₹49/mo ($RZP_PLAN_NAME)"; textSize = 13f; setTextColor(Color.parseColor("#64748B")) })
+        })
+        content.addView(premCard)
+        content.addView(Space(this).apply { minimumHeight = 28 })
+
+        val menuCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 42f)
+            setPadding(35, 20, 35, 20)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        menuCard.addView(createSubRow("👤", "Account Settings", "$name • $email") { showAccountSettingsScreen() })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createSubRow("🛡️", "Privacy Policy", "") {
+            showLegalScreen("Privacy Policy", "Last Updated: October 2026\n\nWelcome to BolPilot (provided by Encode Technologies). We respect your privacy and are committed to protecting your personal data.\n\n1. Information We Collect:\n• Account Information: Name and email address when you sign in with Google.\n• Voice & Clap Processing: All voice recognition, app launching commands, and clap sound detection happen locally in real-time on your device. No raw audio recordings are stored on external servers.\n\n2. Data Sharing & Security:\n• Subscription billing is securely processed via Razorpay ($RZP_PLAN_NAME). We never store your UPI PIN or bank credentials.")
+        })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createSubRow("📄", "Terms of Service", "") {
+            showLegalScreen("Terms of Service", "Last Updated: October 2026\n\nWelcome to BolPilot! These Terms of Service govern your use of the BolPilot mobile application and voice lock services provided by Encode Technologies (Udyam Reg: UDYAM-RJ-04-0039772).\n\n1. Service Description:\nBolPilot provides hands-free voice app launching, digital voice lock shield, and clap/whistle phone finder tools.\n\n2. Subscription & AutoPay:\nPlan ID: $RZP_PLAN_ID\nSubscription ID: $RZP_SUBSCRIPTION_ID\nRecurring Fee: ₹49.00 every month via UPI AutoPay.\n\n3. Governing Law:\nThese terms are governed by the laws of India. Support email: lokesh636780@gmail.com")
+        })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createSubRow("💳", "Refund Policy", "") {
+            showLegalScreen("Refund & Cancellation Policy", "Last Updated: October 2026\n\n1. Cancellation:\nYou can pause or cancel your BolPilot UPI AutoPay mandate ($RZP_SUBSCRIPTION_ID) anytime directly from your UPI app (GPay, PhonePe, or Paytm) or via the Manage Subscription option at least 24 hours before the next monthly renewal date.\n\n2. Refunds:\nIf you experience a technical issue where features do not function on your device, contact us at lokesh636780@gmail.com within 3 days of billing for a full resolution or refund.")
+        })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createSubRow("🎧", "Contact Us", "") {
+            showLegalScreen("Contact Us", "Merchant Legal Name: ENCODE TECHNOLOGIES\nProprietor: Lokesh Meena\nUdyam Registration: UDYAM-RJ-04-0039772\nRegistered Address: Jeerod, Atru, Baran, Rajasthan - 325207\nSupport Email: lokesh636780@gmail.com\nPhone / WhatsApp Support: +91 6367358380")
+        })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createSubRow("⭐", "Manage subscription", "") {
+            openLiveRazorpaySubscriptionCheckout()
+        })
+        menuCard.addView(Space(this).apply { minimumHeight = 14 })
+        menuCard.addView(createSubRow("🛡️", "Permissions", "") {
+            showPermissionsScreen()
+        })
+        content.addView(menuCard)
+        content.addView(Space(this).apply { minimumHeight = 30 })
+
+        content.addView(Button(this).apply {
+            text = "Sign out"
+            textSize = 15.5f; isAllCaps = false; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+            setPadding(40, 36, 40, 36)
+            background = createCard("#FFFFFF", "#E2E8F0", 60f)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            setOnClickListener {
+                stopService(Intent(this@MainActivity, VoiceAssistantService::class.java))
+                prefs.edit().putBoolean("user_logged_in", false).putBoolean("pro_autopay_active", false).apply()
+                showRingbookTrialPaywall()
+            }
+        })
+
+        content.addView(TextView(this).apply {
+            text = "v1.0.0  •  © 2026 BolPilot by Encode Technologies"
+            textSize = 12f; setTextColor(Color.parseColor("#94A3B8")); gravity = Gravity.CENTER; setPadding(0, 28, 0, 10)
+        })
+
+        scroll.addView(content)
+        root.addView(header)
+        root.addView(scroll)
+        mainContainer.addView(root)
     }
 
-    private fun createRoundBadge(label: String): TextView {
+    private fun showAccountSettingsScreen() {
+        currentScreen = "ACCOUNT_SETTINGS"
+        mainContainer.removeAllViews()
+        val email = prefs.getString("user_email", "lokesh636780@gmail.com") ?: "lokesh636780@gmail.com"
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.parseColor("#F7F8FA")); setPadding(50, 100, 50, 50)
+        }
+        root.addView(TextView(this).apply {
+            text = "‹   Account Settings"; textSize = 22f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")); setPadding(0, 0, 0, 30)
+            setOnClickListener { showProfileScreen() }
+        })
+        root.addView(createSubRow("👤", email, "Google Account Connected") {})
+        root.addView(Space(this).apply { minimumHeight = 25 })
+
+        // Payment & Invoice Card (Matches Ringbook)
+        root.addView(createSubRow("🧾", "Payment & Invoice", "Plan: $RZP_PLAN_ID • Sub: $RZP_SUBSCRIPTION_ID") {
+            showLegalScreen("Payment & Invoice", "Merchant: $RZP_PLAN_NAME\nPlan ID: $RZP_PLAN_ID\nSubscription ID: $RZP_SUBSCRIPTION_ID\nBilling Cycle: ₹49.00 / month\nStatus: Active UPI AutoPay Mandate")
+        })
+        root.addView(Space(this).apply { minimumHeight = 25 })
+
+        val statusCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = createCard("#FFFFFF", "#E2E8F0", 38f); setPadding(45, 40, 45, 40)
+        }
+        statusCard.addView(TextView(this).apply {
+            text = "Account Status"; textSize = 15.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        statusCard.addView(TextView(this).apply {
+            text = "Premium Active"; textSize = 13f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#16A34A"))
+            setPadding(30, 14, 30, 14); background = createCard("#DCFCE7", "#BBF7D0", 50f)
+        })
+        root.addView(statusCard)
+        root.addView(Space(this).apply { minimumHeight = 35 })
+
+        // Google Play Store Mandatory Data & Account Deletion Option
+        root.addView(createSubRow("🗑️", "Delete Account & Data", "Permanently erase account & local voice data") {
+            AlertDialog.Builder(this)
+                .setTitle("Delete Account Permanently?")
+                .setMessage("This will permanently delete your BolPilot profile, enrolled voice phrases, and local data from this device.")
+                .setPositiveButton("Delete Account") { d, _ ->
+                    d.dismiss()
+                    stopService(Intent(this@MainActivity, VoiceAssistantService::class.java))
+                    prefs.edit().clear().apply()
+                    Toast.makeText(this@MainActivity, "Account & data deleted successfully.", Toast.LENGTH_LONG).show()
+                    showRingbookTrialPaywall()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        })
+        mainContainer.addView(root)
+    }
+
+    private fun showLegalScreen(title: String, body: String) {
+        currentScreen = "LEGAL_PAGE"
+        mainContainer.removeAllViews()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.parseColor("#F7F8FA")); setPadding(50, 100, 50, 50)
+        }
+        root.addView(TextView(this).apply {
+            text = "‹   $title"; textSize = 22f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")); setPadding(0, 0, 0, 30)
+            setOnClickListener { showProfileScreen() }
+        })
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; background = createCard("#FFFFFF", "#E2E8F0", 38f); setPadding(45, 45, 45, 45)
+        }
+        card.addView(TextView(this).apply { text = body; textSize = 14.5f; setTextColor(Color.parseColor("#334155")); setLineSpacing(12f, 1.1f) })
+        root.addView(card)
+        mainContainer.addView(root)
+    }
+
+    private fun showPublicLegalScreen(title: String, body: String) {
+        currentScreen = "LEGAL_PUBLIC"
+        mainContainer.removeAllViews()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.parseColor("#F7F8FA")); setPadding(50, 100, 50, 50)
+        }
+        root.addView(TextView(this).apply {
+            text = "‹   $title"; textSize = 22f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")); setPadding(0, 0, 0, 30)
+            setOnClickListener { showRingbookTrialPaywall() }
+        })
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; background = createCard("#FFFFFF", "#E2E8F0", 38f); setPadding(45, 45, 45, 45)
+        }
+        card.addView(TextView(this).apply { text = body; textSize = 14.5f; setTextColor(Color.parseColor("#334155")); setLineSpacing(12f, 1.1f) })
+        root.addView(card)
+        mainContainer.addView(root)
+    }
+
+    private fun createRoundBadge(symbol: String): TextView {
         return TextView(this).apply {
-            text = label
-            textSize = 24f
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#0F172A"))
+            text = symbol; textSize = 18f; gravity = Gravity.CENTER
+            setPadding(32, 24, 32, 24)
             background = createCard("#F1F5F9", "#E2E8F0", 100f)
-            layoutParams = LinearLayout.LayoutParams(
-                (58 * resources.displayMetrics.density).toInt(),
-                (58 * resources.displayMetrics.density).toInt()
-            )
         }
     }
 
-    private fun createRingbookSwitch(checked: Boolean, changed: (Boolean) -> Unit): Switch {
+    private fun createSubRow(icon: String, title: String, sub: String, onClick: () -> Unit): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(30, 28, 30, 28)
+            background = createCard("#F8FAFC", "#E2E8F0", 32f)
+            setOnClickListener { onClick() }
+            addView(TextView(context).apply { text = icon; textSize = 17f; setPadding(0, 0, 25, 0) })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(context).apply { text = title; textSize = 15f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")) })
+                if (sub.isNotEmpty()) {
+                    addView(TextView(context).apply { text = sub; textSize = 12.5f; setTextColor(Color.parseColor("#64748B")); setPadding(0, 4, 0, 0) })
+                }
+            })
+            addView(TextView(context).apply { text = "›"; textSize = 20f; setTextColor(Color.parseColor("#94A3B8")) })
+        }
+    }
+
+    private fun createToggleRow(title: String, sub: String, initial: Boolean, onToggle: (Boolean) -> Unit): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                addView(TextView(context).apply { text = title; textSize = 15.5f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A")) })
+                addView(TextView(context).apply { text = sub; textSize = 12.5f; setTextColor(Color.parseColor("#64748B")) })
+            })
+            addView(createRingbookSwitch(initial, onToggle))
+        }
+    }
+
+    private fun createRingbookSwitch(checked: Boolean, onToggle: (Boolean) -> Unit): Switch {
         return Switch(this).apply {
             isChecked = checked
-            textOn = "ON"
-            textOff = "OFF"
-            setOnCheckedChangeListener { _, value -> changed(value) }
+            setOnCheckedChangeListener { _, isChecked -> onToggle(isChecked) }
         }
     }
 
-    private fun createSubRow(icon: String, title: String, subtitle: String, action: () -> Unit): View {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = createCard("#F8FAFC", "#E2E8F0", 24f)
-            setPadding(24, 24, 24, 24)
-            addView(TextView(this@MainActivity).apply {
-                text = icon
-                textSize = 22f
-                setPadding(0, 0, 22, 0)
-            })
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(this@MainActivity).apply {
-                    text = title
-                    textSize = 14f
-                    setTypeface(null, Typeface.BOLD)
-                    setTextColor(Color.parseColor("#0F172A"))
-                })
-                addView(TextView(this@MainActivity).apply {
-                    text = subtitle
-                    textSize = 12f
-                    setTextColor(Color.parseColor("#64748B"))
-                    setPadding(0, 5, 0, 0)
-                })
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            addView(TextView(this@MainActivity).apply {
-                text = "›"
-                textSize = 24f
-                setTextColor(Color.parseColor("#64748B"))
-            })
-            setOnClickListener { action() }
-        }
-    }
-
-    private fun createStepperButton(label: String, action: () -> Unit): View {
+    private fun createStepperButton(symbol: String, onClick: () -> Unit): TextView {
         return TextView(this).apply {
-            text = label
-            textSize = 20f
-            gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#0F172A"))
-            background = createCard("#FFFFFF", "#CBD5E1", 20f)
-            setPadding(28, 16, 28, 16)
-            setOnClickListener { action() }
+            text = symbol; textSize = 18f; setTypeface(null, Typeface.BOLD); setTextColor(Color.parseColor("#0F172A"))
+            gravity = Gravity.CENTER; setPadding(32, 14, 32, 14)
+            background = createCard("#F8FAFC", "#CBD5E1", 100f)
+            setOnClickListener { onClick() }
         }
     }
 
-    private fun createToggleRow(title: String, subtitle: String, checked: Boolean, changed: (Boolean) -> Unit): View {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = createCard("#FFFFFF", "#E2E8F0", 24f)
-            setPadding(24, 22, 24, 22)
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                addView(TextView(this@MainActivity).apply {
-                    text = title
-                    textSize = 14f
-                    setTypeface(null, Typeface.BOLD)
-                    setTextColor(Color.parseColor("#0F172A"))
-                })
-                addView(TextView(this@MainActivity).apply {
-                    text = subtitle
-                    textSize = 12f
-                    setTextColor(Color.parseColor("#64748B"))
-                    setPadding(0, 5, 0, 0)
-                })
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            addView(Switch(this@MainActivity).apply {
-                isChecked = checked
-                setOnCheckedChangeListener { _, value -> changed(value) }
-            })
+    private fun createCard(bgHex: String, strokeHex: String, radius: Float): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(Color.parseColor(bgHex))
+            cornerRadius = radius
+            setStroke(2, Color.parseColor(strokeHex))
         }
     }
-
 }
