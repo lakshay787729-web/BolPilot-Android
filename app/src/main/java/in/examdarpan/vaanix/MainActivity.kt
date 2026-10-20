@@ -519,6 +519,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val q = command.lowercase(Locale.ROOT)
         val result: String
         when {
+            q.contains("find my phone") || q.contains("clap finder") || q.contains("clap se") || q.contains("taali") -> {
+                result = "Clap finder started for 30 seconds. Keep BolPilot open and clap near the phone."
+                startClapFinder()
+            }
             q.contains("lock phone") || q.contains("lock screen") || q.contains("screen lock") || q.contains("फोन लॉक") || q.contains("मोबाइल लॉक") || q.contains("स्क्रीन लॉक") -> {
                 result = lockPhoneScreen()
                 speak(if (responseLanguage == "hi-IN") "Screen lock ke liye device administrator permission zaroori hai. Prompt ko approve karein." else result)
