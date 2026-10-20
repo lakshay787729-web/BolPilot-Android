@@ -37,6 +37,7 @@ class BolPilotListeningService : Service() {
     private var stopping = false
     private var lastCommandAt = 0L
     private var lastCommandText = ""
+    private var speechOutput: android.speech.tts.TextToSpeech? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -47,6 +48,11 @@ class BolPilotListeningService : Service() {
                 stopping = false
                 createNotificationChannel()
                 startForeground(NOTIFICATION_ID, buildNotification())
+                if (speechOutput == null) speechOutput = android.speech.tts.TextToSpeech(this) { status ->
+                    if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                        speechOutput?.language = Locale("hi", "IN")
+                    }
+                }
                 startRecognition()
             }
         }
@@ -222,16 +228,7 @@ class BolPilotListeningService : Service() {
 
     private fun speakAndNotify(spoken: String, status: String) {
         updateNotification(status)
-        runCatching {
-            android.speech.tts.TextToSpeech(this) { result ->
-                if (result == android.speech.tts.TextToSpeech.SUCCESS) {
-                    // Use Hindi (India) when installed; the TTS engine chooses a supported fallback otherwise.
-                    val engine = android.speech.tts.TextToSpeech(this, null)
-                    engine.language = Locale("hi", "IN")
-                    engine.speak(spoken, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "bolpilot-voice-response")
-                }
-            }
-        }
+        speechOutput?.speak(spoken, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "bolpilot-voice-response")
     }
 
     private fun setFlashlight(enabled: Boolean) {
