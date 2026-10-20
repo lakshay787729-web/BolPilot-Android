@@ -35,7 +35,6 @@ class BolPilotListeningService : Service() {
 
     private var recognizer: SpeechRecognizer? = null
     private var stopping = false
-    private var restartPending = false
     private var lastCommandAt = 0L
     private var lastCommandText = ""
 
@@ -96,11 +95,16 @@ class BolPilotListeningService : Service() {
                     override fun onRmsChanged(rmsdB: Float) {}
                     override fun onBufferReceived(buffer: ByteArray?) {}
                     override fun onEndOfSpeech() { updateNotification("Processing speech…") }
-                    override fun onError(error: Int) { scheduleRestart() }
+                    override fun onError(error: Int) {
+                        updateNotification(errorMessage(error) + " Hands-free stopped to prevent repeated mic tones. Tap BolPilot to start again.")
+                        stopListeningService()
+                    }
                     override fun onResults(results: Bundle?) {
                         val phrase = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                         if (phrase.isNotBlank()) handleCommand(phrase)
-                        scheduleRestart()
+                        if (phrase.isBlank()) updateNotification("No speech recognized. Hands-free stopped; tap to retry.")
+                        else updateNotification("Command received. Hands-free stopped; tap to listen again.")
+                        stopListeningService()
                     }
                     override fun onPartialResults(partialResults: Bundle?) {}
                     override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -117,17 +121,18 @@ class BolPilotListeningService : Service() {
             }
             recognizer?.startListening(speechIntent)
         } catch (_: Exception) {
-            scheduleRestart()
+            updateNotification("Could not start speech recognition. Hands-free stopped; tap to retry.")
+            stopListeningService()
         }
     }
 
-    private fun scheduleRestart() {
-        if (stopping || restartPending) return
-        restartPending = true
-        android.os.Handler(mainLooper).postDelayed({
-            restartPending = false
-            if (!stopping) startRecognition()
-        }, 900L)
+    private fun errorMessage(error: Int): String = when (error) {
+        SpeechRecognizer.ERROR_AUDIO -> "Microphone audio error."
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is missing."
+        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech service network error."
+        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No command heard."
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech service is busy."
+        else -> "Speech recognition failed."
     }
 
     private fun handleCommand(raw: String) {
