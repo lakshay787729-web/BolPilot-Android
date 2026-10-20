@@ -142,10 +142,71 @@ class BolPilotListeningService : Service() {
         if (q == lastCommandText && now - lastCommandAt < 2500L) return
         lastCommandText = q
         lastCommandAt = now
+
         when {
+            q.contains("flashlight on") || q.contains("torch on") || q.contains("turn on flashlight") ||
+                q.contains("टॉर्च चालू") || q.contains("लाइट चालू") || q.contains("फ्लैशलाइट चालू") -> setFlashlight(true)
+            q.contains("flashlight off") || q.contains("torch off") || q.contains("turn off flashlight") ||
+                q.contains("टॉर्च बंद") || q.contains("लाइट बंद") || q.contains("फ्लैशलाइट बंद") -> setFlashlight(false)
+            q.contains("what time") || q.contains("time is it") || q.contains("कितने बजे") || q.contains("समय क्या") -> {
+                val time = java.text.SimpleDateFormat("h:mm a", Locale("en", "IN")).format(java.util.Date())
+                speakAndNotify("अभी समय $time है", "Time: $time")
+            }
+            q.contains("today date") || q.contains("today's date") || q.contains("what is the date") ||
+                q.contains("आज की तारीख") || q.contains("आज कौन सी तारीख") -> {
+                val date = java.text.SimpleDateFormat("d MMMM yyyy", Locale("en", "IN")).format(java.util.Date())
+                speakAndNotify("आज $date है", "Date: $date")
+            }
+            q.contains("battery") || q.contains("बैटरी") -> {
+                val battery = getSystemService(BATTERY_SERVICE) as android.os.BatteryManager
+                val level = battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                speakAndNotify("बैटरी $level प्रतिशत है", "Battery: $level%")
+            }
+            q.contains("go to home") || q.contains("home screen") || q.contains("back to home") ||
+                q.contains("close app") || q.contains("होम स्क्रीन") || q.contains("होम पर जाओ") -> {
+                val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                runCatching { startActivity(home) }.onFailure { updateNotification("Could not open Home screen") }
+            }
+            q.contains("play ") && (q.contains("youtube") || q.contains("यूट्यूब")) ||
+                q.startsWith("search ") && (q.contains("youtube") || q.contains("यूट्यूब")) -> {
+                val query = phrase
+                    .replace(Regex("(?i)play|search|on youtube|youtube|यूट्यूब पर|यूट्यूब"), "")
+                    .replace("चलाओ", "").replace("चला दो", "").trim()
+                if (query.isNotBlank()) {
+                    val youtube = Intent(Intent.ACTION_SEARCH).setPackage("com.google.android.youtube")
+                        .putExtra("query", query).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    val launched = runCatching { startActivity(youtube) }.isSuccess
+                    if (!launched) runCatching {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=" + Uri.encode(query)))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                } else launchAppByName("YouTube")
+            }
+            q.contains("search ") || q.contains("google par") || q.contains("सर्च करो") || q.contains("खोजो") -> {
+                val query = phrase.replace(Regex("(?i)search|on google|google par|search karo|सर्च करो|खोजो"), "").trim()
+                if (query.isNotBlank()) {
+                    val search = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query)))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    runCatching { startActivity(search) }.onFailure { updateNotification("Could not open Google Search") }
+                }
+            }
+            q.contains("open camera") || q.contains("take selfie") || q.contains("कैमरा खोलो") || q.contains("सेल्फी") -> {
+                val camera = Intent("android.media.action.IMAGE_CAPTURE").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                runCatching { startActivity(camera) }.onFailure { updateNotification("No camera app found") }
+            }
+            q.contains("lock phone") || q.contains("lock screen") || q.contains("screen lock") ||
+                q.contains("फोन लॉक") || q.contains("मोबाइल लॉक") || q.contains("स्क्रीन लॉक") -> lockScreen()
+            q.contains("wake screen") || q.contains("turn screen on") || q.contains("unlock phone") ||
+                q.contains("unlock screen") || q.contains("फोन अनलॉक") || q.contains("स्क्रीन चालू") -> wakeScreenForUnlock()
+            q.contains("open settings") || q.contains("settings kholo") || q.contains("सेटिंग खोलो") || q.contains("सेटिंग्स खोलो") -> {
+                runCatching { startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    .onFailure { updateNotification("Could not open Settings") }
+            }
             q.startsWith("open ") || q.startsWith("launch ") || q.startsWith("start ") ||
-                q.startsWith("खोलो ") || q.startsWith("खोल ") || q.startsWith("चालू करो ") -> {
+                q.startsWith("खोलो ") || q.startsWith("खोल ") || q.startsWith("चालू करो ") ||
+                q.startsWith("open the ") -> {
                 val appName = when {
+                    q.startsWith("open the ") -> phrase.substring(9)
                     q.startsWith("open ") -> phrase.substring(5)
                     q.startsWith("launch ") -> phrase.substring(7)
                     q.startsWith("start ") -> phrase.substring(6)
@@ -155,27 +216,36 @@ class BolPilotListeningService : Service() {
                 }.trim().removeSuffix(" app").removeSuffix(" ऐप")
                 if (appName.isNotBlank()) launchAppByName(appName)
             }
-            q.contains("search google for ") || q.startsWith("search for ") || q.startsWith("google par search karo ") ||
-                q.startsWith("सर्च करो ") || q.startsWith("खोजो ") -> {
-                val query = when {
-                    q.contains("search google for ") -> phrase.substringAfter("search google for ")
-                    q.startsWith("search for ") -> phrase.substringAfter("search for ")
-                    q.startsWith("google par search karo ") -> phrase.substringAfter("google par search karo ")
-                    q.startsWith("सर्च करो ") -> phrase.substringAfter("सर्च करो ")
-                    else -> phrase.substringAfter("खोजो ")
-                }.trim()
-                if (query.isNotBlank()) {
-                    val search = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(query))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    runCatching { startActivity(search) }
+            else -> updateNotification("Command not recognized: $phrase")
+        }
+    }
+
+    private fun speakAndNotify(spoken: String, status: String) {
+        updateNotification(status)
+        runCatching {
+            val tts = android.speech.tts.TextToSpeech(this) { result ->
+                if (result == android.speech.tts.TextToSpeech.SUCCESS) {
+                    // Prefer an Indian Hindi voice when available; system fallback remains usable.
+                    val engine = this.ttsEngine
                 }
             }
-            q.contains("lock phone") || q.contains("lock screen") || q.contains("screen lock") ||
-                q.contains("फोन लॉक") || q.contains("मोबाइल लॉक") || q.contains("स्क्रीन लॉक") -> lockScreen()
-            q.contains("wake screen") || q.contains("turn screen on") || q.contains("unlock phone") ||
-                q.contains("unlock screen") || q.contains("फोन अनलॉक") || q.contains("स्क्रीन चालू") -> wakeScreenForUnlock()
-            q.contains("open settings") || q.contains("सेटिंग खोलो") -> {
-                runCatching { startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+    }
+
+    private fun setFlashlight(enabled: Boolean) {
+        try {
+            val manager = getSystemService(CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+            val id = manager.cameraIdList.firstOrNull { cameraId ->
+                manager.getCameraCharacteristics(cameraId).get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
             }
+            if (id == null) {
+                updateNotification("This device has no flashlight")
+                return
+            }
+            manager.setTorchMode(id, enabled)
+            updateNotification(if (enabled) "Flashlight turned on" else "Flashlight turned off")
+        } catch (_: Exception) {
+            updateNotification("Flashlight unavailable. Check Camera permission and device support.")
         }
     }
 
