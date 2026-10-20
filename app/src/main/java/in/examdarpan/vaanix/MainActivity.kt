@@ -87,6 +87,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val credential = GoogleAuthProvider.getCredential(account.idToken, null)
             auth?.signInWithCredential(credential)?.addOnCompleteListener { taskResult ->
                 if (taskResult.isSuccessful) {
+                    getSharedPreferences("bolpilot_settings", MODE_PRIVATE).edit().putBoolean("guest_mode", false).apply()
                     signedInName = auth?.currentUser?.displayName ?: account.displayName ?: account.email
                     toast("Signed in successfully")
                     showPage("home")
@@ -118,8 +119,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (FirebaseApp.getApps(this).isNotEmpty()) auth = FirebaseAuth.getInstance()
         signedInName = auth?.currentUser?.displayName ?: auth?.currentUser?.email
         buildShell()
-        // Require an account on first launch; Firebase restores an existing session automatically.
-        showPage(if (auth?.currentUser == null) "profile" else "home")
+        // Firebase session or an explicitly chosen local guest session can enter the app.
+        showPage(if (auth?.currentUser != null || isGuestMode()) "home" else "profile")
     }
 
     override fun onInit(status: Int) {
@@ -174,9 +175,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (!::content.isInitialized) return
         // Hard gate every in-app destination until Firebase has an authenticated user.
         // This also blocks Home/History/Settings/Premium after a cancelled sign-in.
-        val destination = if (auth?.currentUser == null && page != "profile") "profile" else page
+        val allowedWithoutAccount = isGuestMode()
+        val destination = if (auth?.currentUser == null && !allowedWithoutAccount && page != "profile") "profile" else page
         currentPage = destination
-        if (::bottomNav.isInitialized) bottomNav.visibility = if (auth?.currentUser == null) View.GONE else View.VISIBLE
+        if (::bottomNav.isInitialized) bottomNav.visibility = if (auth?.currentUser == null && !allowedWithoutAccount) View.GONE else View.VISIBLE
         content.removeAllViews()
         val pageView = when (destination) {
             "history" -> historyPage()
@@ -324,7 +326,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun profilePage(): View {
         val col = pageColumn()
         val user = auth?.currentUser
-        if (user == null) {
+        if (user == null && !isGuestMode()) {
             col.addView(text("BolPilot", 34f, white, true))
             col.addView(text("YOUR PHONE. YOUR VOICE.", 12f, cyan, true).apply { letterSpacing = .14f; setPadding(0, dp(2), 0, dp(22)) })
             val hero = cardColumn()
@@ -335,14 +337,27 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             hero.addView(text("Welcome to BolPilot", 23f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(8)) })
             hero.addView(text("Sign in with Google to securely access your voice assistant, profile and settings.", 14f, muted).apply { gravity = Gravity.CENTER })
             col.addView(hero, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(18) })
-            col.addView(button("Continue with Google  →", white, navy) { beginGoogleSignIn() }, LinearLayout.LayoutParams(-1, dp(58)).apply { bottomMargin = dp(12) })
-            col.addView(text("Secure sign-in powered by Firebase", 12f, muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(18)) })
+            col.addView(button("Continue with Google  →", white, navy) { beginGoogleSignIn() }, LinearLayout.LayoutParams(-1, dp(58)).apply { bottomMargin = dp(10) })
+            col.addView(button("Continue as Guest", panel2, cyan) {
+                getSharedPreferences("bolpilot_settings", MODE_PRIVATE).edit().putBoolean("guest_mode", true).apply()
+                signedInName = "Guest"
+                toast("Guest mode enabled on this device")
+                showPage("home")
+            }, LinearLayout.LayoutParams(-1, dp(54)).apply { bottomMargin = dp(10) })
+            col.addView(text("Guest mode stores settings and history on this device. Google sign-in is optional.", 12f, muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(18)) })
             col.addView(actionRow("Privacy Policy", "How BolPilot handles your information", "View") { openLegalPage("privacy") })
             col.addView(actionRow("Terms of Service", "Terms for using BolPilot", "View") { openLegalPage("terms") })
             col.addView(actionRow("Support", "Get help with sign-in or voice commands", "Contact") { showPage("help") })
         } else {
-            col.addView(text("My profile", 27f, white, true))
-            col.addView(text("Your account and preferences", 14f, muted).apply { setPadding(0, dp(4), 0, dp(18)) })
+            col.addView(text(if (user == null) "Guest profile" else "My profile", 27f, white, true))
+            col.addView(text(if (user == null) "Using BolPilot on this device" else "Your account and preferences", 14f, muted).apply { setPadding(0, dp(4), 0, dp(18)) })
+            if (user == null) {
+                val guestCard = cardColumn()
+                guestCard.addView(text("Guest mode", 19f, white, true))
+                guestCard.addView(text("Voice commands and local settings are available. Sign in later to connect your Google account.", 13f, muted).apply { setPadding(0, dp(6), 0, dp(10)) })
+                guestCard.addView(button("Sign in with Google", white, navy) { beginGoogleSignIn() }, LinearLayout.LayoutParams(-1, dp(48)))
+                col.addView(guestCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
+            }
             val card = cardColumn()
             card.addView(text("●", 38f, cyan, true).apply { gravity = Gravity.CENTER })
             card.addView(text(user.displayName ?: signedInName ?: "BolPilot member", 19f, white, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(4)) })
@@ -355,8 +370,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             col.addView(actionRow("Terms of Service", "Terms for using BolPilot", "View") { openLegalPage("terms") })
             col.addView(actionRow("Support & help", "Troubleshoot commands and permissions", "Open") { showPage("help") })
             col.addView(actionRow("Premium plans", "See future premium options", "View") { showPage("premium") })
-            col.addView(button("Sign out", 0xFF3B1B34.toInt(), red) {
-                auth?.signOut()
+            col.addView(button(if (user == null) "Exit Guest Mode" else "Sign out", 0xFF3B1B34.toInt(), red) {
+                if (user == null) {
+                    getSharedPreferences("bolpilot_settings", MODE_PRIVATE).edit().putBoolean("guest_mode", false).apply()
+                    signedInName = null
+                    showPage("profile")
+                } else {
+                    auth?.signOut()
+                    getSharedPreferences("bolpilot_settings", MODE_PRIVATE).edit().putBoolean("guest_mode", false).apply()
+                    signedInName = null
+                }
                 GoogleSignIn.getClient(this, GoogleSignInOptions.DEFAULT_SIGN_IN).signOut()
                 signedInName = null
                 showPage("profile")
@@ -593,6 +616,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         try { startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(number)}"))) }
         catch (_: Exception) { toast("No phone dialer available") }
     }
+
+    private fun isGuestMode(): Boolean =
+        getSharedPreferences("bolpilot_settings", MODE_PRIVATE).getBoolean("guest_mode", false)
 
     private fun beginGoogleSignIn() {
         if (FirebaseApp.getApps(this).isEmpty() || auth == null) {
