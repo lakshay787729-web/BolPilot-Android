@@ -117,7 +117,7 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         // Strict Paywall Protection: Cannot bypass paywall without active subscription
-        if (!prefs.getBoolean("pro_autopay_active", false)) {
+        if (!hasAppAccess()) {
             if (currentScreen == "SIGN_IN" || currentScreen == "LEGAL_PUBLIC") {
                 showRingbookTrialPaywall()
             } else {
@@ -139,17 +139,31 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun hasAppAccess(): Boolean {
+        return prefs.getBoolean("guest_mode", false) ||
+            prefs.getBoolean("pro_autopay_active", false)
+    }
+
+    private fun enterGuestMode() {
+        prefs.edit()
+            .putBoolean("guest_mode", true)
+            .putBoolean("user_logged_in", false)
+            .putBoolean("pro_autopay_active", false)
+            .apply()
+        Toast.makeText(this, "Guest mode enabled. Payment and login are skipped for testing.", Toast.LENGTH_LONG).show()
+        showRingbookDashboard()
+    }
+
     private fun routeInitialScreen() {
+        val isGuest = prefs.getBoolean("guest_mode", false)
         val isLogged = prefs.getBoolean("user_logged_in", false)
         val isSubscribed = prefs.getBoolean("pro_autopay_active", false)
 
-        if (!isLogged || !isSubscribed) {
-            showRingbookTrialPaywall()
-        } else {
-            if (prefs.getBoolean("master_listening_on", true)) {
-                safeStartAssistantService()
-            }
+        if (isGuest || (isLogged && isSubscribed)) {
+            if (prefs.getBoolean("master_listening_on", true)) safeStartAssistantService()
             showRingbookDashboard()
+        } else {
+            showRingbookTrialPaywall()
         }
     }
 
@@ -163,7 +177,7 @@ class MainActivity : Activity() {
     }
 
     private fun safeStartAssistantService() {
-        if (!prefs.getBoolean("pro_autopay_active", false)) return
+        if (!hasAppAccess()) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 102)
@@ -542,9 +556,20 @@ class MainActivity : Activity() {
             }
         }
 
+        val guestModeLink = TextView(this).apply {
+            text = "Continue as Guest — Test App"
+            textSize = 14.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#0284C7"))
+            gravity = Gravity.CENTER
+            setPadding(0, 24, 0, 8)
+            setOnClickListener { enterGuestMode() }
+        }
+
         bottomBar.addView(upiRow)
         bottomBar.addView(startTrialBtn)
         bottomBar.addView(signInLink)
+        bottomBar.addView(guestModeLink)
 
         root.addView(scroll)
         root.addView(bottomBar)
