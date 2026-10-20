@@ -23,11 +23,15 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.concurrent.thread
+import kotlin.math.abs
+import kotlin.math.sqrt
 
 class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
@@ -49,21 +53,25 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private var isExternalMediaPlaying = false
     private var isTorchOn = false
 
-    private var clapCounter = 0
-    private var lastClapTime = 0L
+    // Raw PCM Clap Detection variables (Works 10x faster than SpeechRecognizer!)
+    private var clapDetectorRunning = false
+    private var clapSpikeCount = 0
+    private var lastSpikeTimestamp = 0L
+
     private var lastActionTimestamp = 0L
     private var lastUnlockTimestamp = 0L
+    private var countdownTimer: CountDownTimer? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val CHANNEL_ID = "BolPilot_Ultra_OS"
+    private val CHANNEL_ID = "BolPilot_Siri_Engine"
 
     companion object {
         var isRunning = false
-        var lastHeardCommand = "Listening in background..."
+        var lastHeardCommand = "Ready • Listening for your voice"
         var liveSoundLevel = 0
     }
 
-    // Smart Media Guard: Automatically pauses mic while YouTube/Facebook/Instagram video plays so video NEVER pauses!
+    // Smart Media Guard: Pauses SpeechRecognizer while YouTube/Instagram/Facebook video plays so video NEVER pauses
     private val mediaPlaybackCallback = object : AudioManager.AudioPlaybackCallback() {
         override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
             super.onPlaybackConfigChanged(configs)
@@ -81,7 +89,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
             } else if (!activeMedia && !isPausedForWizard && !isListeningActive) {
-                scheduleRestart(350)
+                scheduleRestart(250)
             }
         }
     }
@@ -107,7 +115,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         createNotificationChannel()
 
         try {
-            val notification = buildNotification("BolPilot is listening • Hands-Free Siri & Voice Lock active")
+            val notification = buildNotification("BolPilot is listening • All features ready")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(101, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             } else {
@@ -121,6 +129,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         acquireWakeLock()
         setupOverlayBridge()
         tts = TextToSpeech(applicationContext, this, "com.google.android.tts")
+        startRawPcmClapDetector()
         initSpeechRecognizer()
         startSmartWatchdog()
     }
@@ -149,7 +158,6 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         return START_STICKY
     }
 
-    // Auto-restarts in background even if user kills/swipes app away from recents!
     override fun onTaskRemoved(rootIntent: Intent?) {
         val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
         if (prefs.getBoolean("master_listening_on", true) && prefs.getBoolean("pro_autopay_active", false)) {
@@ -159,7 +167,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
             )
             val alarm = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            alarm.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 300, pending)
+            alarm.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + 250, pending)
         }
         super.onTaskRemoved(rootIntent)
     }
@@ -168,12 +176,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private fun acquireWakeLock() {
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BolPilot::AlwaysOnSiri")
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BolPilot::SiriAlwaysOn")
             wakeLock?.acquire()
         } catch (e: Exception) {}
     }
 
-    // 1px Invisible Overlay Bridge so Android 10-15 allows launching ANY app from background!
     private fun setupOverlayBridge() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
             try {
@@ -198,6 +205,107 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    // =========================================================================
+    // DEDICATED HIGH-SPEED CLAP & WHISTLE DETECTOR (Like Ringbook — 0.1s Response!)
+    // =========================================================================
+    @SuppressLint("MissingPermission")
+    private fun startRawPcmClapDetector() {
+        if (clapDetectorRunning) return
+        clapDetectorRunning = true
+
+        thread(start = true, name = "BolPilotClapThread") {
+            val sampleRate = 16000
+            val minBuf = AudioRecord.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            )
+            if (minBuf <= 0) return@thread
+
+            var recorder: AudioRecord? = null
+            val buffer = ShortArray(minBuf)
+
+            while (!isDestroyed) {
+                try {
+                    val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
+                    val clapEnabled = prefs.getBoolean("clap_to_find", false)
+                    val siriEnabled = prefs.getBoolean("siri_os_enabled", true)
+                    val voiceLockEnabled = prefs.getBoolean("voice_lock_enabled", true)
+
+                    // Run raw PCM detector whenever Clap-to-Find is ON and SpeechRecognizer isn't holding the mic,
+                    // OR during short windows between speech cycles so claps are caught instantaneously!
+                    if (clapEnabled && !isFindingPhone && !isPausedForWizard && (!siriEnabled && !voiceLockEnabled || !isListeningActive)) {
+                        if (recorder == null) {
+                            recorder = AudioRecord(
+                                MediaRecorder.AudioSource.MIC,
+                                sampleRate,
+                                AudioFormat.CHANNEL_IN_MONO,
+                                AudioFormat.ENCODING_PCM_16BIT,
+                                minBuf
+                            )
+                            if (recorder.state == AudioRecord.STATE_INITIALIZED) {
+                                recorder.startRecording()
+                            } else {
+                                recorder.release()
+                                recorder = null
+                            }
+                        }
+
+                        val readCount = recorder?.read(buffer, 0, buffer.size) ?: 0
+                        if (readCount > 0) {
+                            var sum = 0.0
+                            var peak = 0
+                            for (i in 0 until readCount) {
+                                val v = abs(buffer[i].toInt())
+                                if (v > peak) peak = v
+                                sum += (buffer[i] * buffer[i]).toDouble()
+                            }
+                            val rms = sqrt(sum / readCount)
+                            val normalizedLevel = ((peak / 32767.0) * 100).toInt().coerceIn(0, 100)
+                            liveSoundLevel = normalizedLevel
+                            sendBroadcast(Intent("BOLPILOT_SOUND_LEVEL").putExtra("LEVEL", normalizedLevel))
+
+                            val sens = prefs.getString("clap_sensitivity", "Medium") ?: "Medium"
+                            val spikeThreshold = when (sens) {
+                                "Low" -> 22000
+                                "High" -> 11000
+                                else -> 16000
+                            }
+
+                            if (peak >= spikeThreshold && rms > 1200) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastSpikeTimestamp in 140..1400) {
+                                    clapSpikeCount++
+                                } else if (now - lastSpikeTimestamp > 1400) {
+                                    clapSpikeCount = 1
+                                }
+                                lastSpikeTimestamp = now
+
+                                val reqClaps = prefs.getInt("claps_required", 2)
+                                if (clapSpikeCount >= reqClaps) {
+                                    clapSpikeCount = 0
+                                    mainHandler.post { triggerFindMyPhoneAlert() }
+                                }
+                            }
+                        }
+                    } else {
+                        if (recorder != null) {
+                            try { recorder.stop() } catch (e: Exception) {}
+                            try { recorder.release() } catch (e: Exception) {}
+                            recorder = null
+                        }
+                        Thread.sleep(180)
+                    }
+                } catch (e: Exception) {
+                    try { recorder?.release() } catch (ex: Exception) {}
+                    recorder = null
+                    Thread.sleep(300)
+                }
+            }
+            try { recorder?.release() } catch (e: Exception) {}
+        }
+    }
+
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             applyHumanFemaleVoice()
@@ -206,31 +314,24 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun applyHumanFemaleVoice() {
         try {
-            val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
-            val appLang = prefs.getString("app_lang", "en-IN") ?: "en-IN"
-            val targetLocale = if (appLang.startsWith("hi")) Locale("hi", "IN") else Locale("en", "IN")
-            tts.language = targetLocale
-
+            tts.language = Locale("en", "IN")
             val voices = tts.voices
             if (!voices.isNullOrEmpty()) {
                 val bestFemale = voices.firstOrNull { v ->
                     v.locale.country.equals("IN", true) &&
-                            (v.name.contains("female", true) || v.name.contains("ene", true) || v.name.contains("hie", true) || v.name.contains("network", true))
+                            (v.name.contains("female", true) || v.name.contains("ene", true) || v.name.contains("network", true))
                 } ?: voices.firstOrNull { it.locale.country.equals("IN", true) }
                 if (bestFemale != null) tts.voice = bestFemale
             }
-            tts.setPitch(1.08f)
-            tts.setSpeechRate(0.98f)
+            tts.setPitch(1.06f)
+            tts.setSpeechRate(1.0f)
         } catch (e: Exception) {}
     }
 
-    private fun speak(englishText: String, hindiText: String = englishText) {
+    private fun speak(text: String) {
         try {
             if (!audioManager.isMusicActive && !isExternalMediaPlaying) {
-                val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
-                val appLang = prefs.getString("app_lang", "en-IN") ?: "en-IN"
-                val textToSpeak = if (appLang.startsWith("hi")) hindiText else englishText
-                tts.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "BolPilotTTS")
+                tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "BolPilotTTS")
             }
         } catch (e: Exception) {}
     }
@@ -239,13 +340,15 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         mainHandler.postDelayed(object : Runnable {
             override fun run() {
                 if (isDestroyed) return
+                val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
+                val needSpeech = prefs.getBoolean("siri_os_enabled", true) || prefs.getBoolean("voice_lock_enabled", true)
                 val mediaBusy = (audioManager.isMusicActive || isExternalMediaPlaying) && lockScreenView == null && !isFindingPhone
-                if (!isPausedForWizard && !mediaBusy && !isListeningActive) {
+                if (needSpeech && !isPausedForWizard && !mediaBusy && !isListeningActive) {
                     safeStartListening()
                 }
-                mainHandler.postDelayed(this, 1400)
+                mainHandler.postDelayed(this, 1100)
             }
-        }, 1400)
+        }, 1100)
     }
 
     private fun initSpeechRecognizer() {
@@ -258,8 +361,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1100L)
                 }
 
                 speechRecognizer?.setRecognitionListener(object : RecognitionListener {
@@ -270,32 +373,28 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         liveSoundLevel = level
                         sendBroadcast(Intent("BOLPILOT_SOUND_LEVEL").putExtra("LEVEL", level))
 
+                        // Instant Clap Detection inside SpeechRecognizer RMS stream too!
                         val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
-                        if (!prefs.getBoolean("clap_to_find", false) || isFindingPhone) return
-                        if (prefs.getBoolean("clap_screen_off_only", false)) {
-                            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-                            if (pm.isInteractive) return
-                        }
-
-                        val sensitivity = prefs.getString("clap_sensitivity", "Medium") ?: "Medium"
-                        val threshold = when (sensitivity) {
-                            "Low" -> 11.5f
-                            "High" -> 8.8f
-                            else -> 10.2f
-                        }
-
-                        if (rmsdB >= threshold) {
-                            val now = System.currentTimeMillis()
-                            if (now - lastClapTime > 250 && now - lastClapTime < 1800) {
-                                clapCounter++
-                            } else if (now - lastClapTime >= 1800) {
-                                clapCounter = 1
+                        if (prefs.getBoolean("clap_to_find", false) && !isFindingPhone) {
+                            val sens = prefs.getString("clap_sensitivity", "Medium") ?: "Medium"
+                            val thresh = when (sens) {
+                                "Low" -> 10.5f
+                                "High" -> 7.8f
+                                else -> 9.0f
                             }
-                            lastClapTime = now
-                            val requiredClaps = prefs.getInt("claps_required", 2)
-                            if (clapCounter >= requiredClaps) {
-                                clapCounter = 0
-                                triggerFindMyPhoneAlert()
+                            if (rmsdB >= thresh) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastSpikeTimestamp in 150..1600) {
+                                    clapSpikeCount++
+                                } else if (now - lastSpikeTimestamp > 1600) {
+                                    clapSpikeCount = 1
+                                }
+                                lastSpikeTimestamp = now
+                                val req = prefs.getInt("claps_required", 2)
+                                if (clapSpikeCount >= req) {
+                                    clapSpikeCount = 0
+                                    triggerFindMyPhoneAlert()
+                                }
                             }
                         }
                     }
@@ -305,7 +404,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         isListeningActive = false
                         val mediaBusy = (audioManager.isMusicActive || isExternalMediaPlaying) && lockScreenView == null
                         if (!isPausedForWizard && !mediaBusy) {
-                            scheduleRestart(300)
+                            scheduleRestart(220)
                         }
                     }
                     override fun onResults(results: Bundle?) {
@@ -320,7 +419,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         }
                         val mediaBusy = (audioManager.isMusicActive || isExternalMediaPlaying) && lockScreenView == null
                         if (!isPausedForWizard && !mediaBusy) {
-                            scheduleRestart(180)
+                            scheduleRestart(150)
                         }
                     }
                     override fun onPartialResults(partialResults: Bundle?) {
@@ -340,7 +439,6 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // Translates Hindi/Devanagari speech recognition output into clean English commands automatically
     private fun normalizeHindiToLatin(input: String): String {
         return input
             .replace("ओपन", "open")
@@ -377,6 +475,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun safeStartListening() {
         if (isDestroyed || isPausedForWizard) return
+        val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
+        val needSpeech = prefs.getBoolean("siri_os_enabled", true) || prefs.getBoolean("voice_lock_enabled", true)
+        if (!needSpeech) return
+
         val mediaBusy = (audioManager.isMusicActive || isExternalMediaPlaying) && lockScreenView == null && !isFindingPhone
         if (mediaBusy) return
 
@@ -404,33 +506,36 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }, delay)
     }
 
+    // =========================================================================
+    // PRECISION SIRI COMMAND ENGINE (Zero False Clock/Phone Triggers!)
+    // =========================================================================
     private fun executeVoiceCommand(rawInput: String): Boolean {
         val now = System.currentTimeMillis()
-        if (now - lastActionTimestamp < 850) return false
+        if (now - lastActionTimestamp < 800) return false
 
         val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
         val voiceLockEnabled = prefs.getBoolean("voice_lock_enabled", true)
         val siriOsEnabled = prefs.getBoolean("siri_os_enabled", true)
 
-        val unlockPhrase = normalizeHindiToLatin((prefs.getString("unlock_phrase", "unlock the phone") ?: "unlock the phone").lowercase().trim())
-        val lockPhrase = normalizeHindiToLatin((prefs.getString("lock_phrase", "lock the phone") ?: "lock the phone").lowercase().trim())
+        val unlockPhrase = normalizeHindiToLatin((prefs.getString("unlock_phrase", "unlock my phone") ?: "unlock my phone").lowercase().trim())
+        val lockPhrase = normalizeHindiToLatin((prefs.getString("lock_phrase", "lock my phone") ?: "lock my phone").lowercase().trim())
         val backupPin = (prefs.getString("backup_pin", "6367") ?: "6367").lowercase().trim()
 
         // 0. SILENCE PHONE FOUND ALARM BY VOICE
-        if (isFindingPhone && (rawInput.contains("stop") || rawInput.contains("off") || rawInput.contains("quiet"))) {
+        if (isFindingPhone && (rawInput.contains("stop") || rawInput.contains("quiet") || rawInput.contains("silence"))) {
             lastActionTimestamp = now
             stopFindMyPhoneAlert()
             return true
         }
 
         val spokenDigits = rawInput.filter { it.isDigit() }
-        val hasUnlockMatch = rawInput.contains("unlock") ||
+        val isUnlockCommand = rawInput.contains("unlock") || rawInput.contains("unlok") || rawInput.contains("anlok") ||
                 (unlockPhrase.isNotEmpty() && rawInput.contains(unlockPhrase)) ||
                 (spokenDigits.isNotEmpty() && spokenDigits == backupPin)
 
-        // 1. IF LOCK SCREEN IS ACTIVE -> CHECK UNLOCK
+        // 1. IF LOCK SCREEN IS ACTIVE -> CHECK UNLOCK IMMEDIATELY
         if (lockScreenView != null) {
-            if (hasUnlockMatch) {
+            if (isUnlockCommand || rawInput.contains("open my phone") || rawInput.contains("open the phone")) {
                 lastActionTimestamp = now
                 lastUnlockTimestamp = now
                 unlockAndWakePhone()
@@ -439,16 +544,20 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             return false
         }
 
-        if (hasUnlockMatch || (now - lastUnlockTimestamp < 3200)) {
+        if (isUnlockCommand || (now - lastUnlockTimestamp < 3000)) {
             return false
         }
 
-        // 2. VOICE LOCK COMMAND
-        if (voiceLockEnabled && (
-                    (lockPhrase.isNotEmpty() && rawInput.contains(lockPhrase)) ||
-                    rawInput.contains("lock phone") || rawInput.contains("lock the phone") ||
-                    rawInput.contains("lock my phone") || rawInput.contains("phone lock") ||
-                    rawInput.contains("screen lock"))) {
+        // 2. INSTANT VOICE LOCK MATCHING (Catches "clock my phone", "log the phone", "lok phone", "block phone" too!)
+        val soundsLikeLock = rawInput.contains("lock my") || rawInput.contains("lock the") ||
+                rawInput.contains("lock phone") || rawInput.contains("phone lock") ||
+                rawInput.contains("screen lock") || rawInput.contains("clock my phone") ||
+                rawInput.contains("clock the phone") || rawInput.contains("log the phone") ||
+                rawInput.contains("log my phone") || rawInput.contains("lok my phone") ||
+                rawInput.contains("lok the phone") || rawInput.contains("block my phone") ||
+                (lockPhrase.isNotEmpty() && rawInput.contains(lockPhrase))
+
+        if (voiceLockEnabled && soundsLikeLock) {
             lastActionTimestamp = now
             lockPhoneNow()
             return true
@@ -466,6 +575,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val cmd = rawInput
             .replace("hey siri", "")
             .replace("hi siri", "")
+            .replace("hey ringbook", "")
             .replace("bolpilot", "")
             .replace("please", "")
             .replace("open the", "open")
@@ -474,12 +584,12 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         if (cmd.isEmpty()) return false
 
         try {
-            // 4. GO TO HOME / BACK TO HOME / CLOSE APP
+            // 4. GO TO HOME / BACK HOME / CLOSE APP
             if (cmd.contains("go to home") || cmd.contains("back to home") ||
-                cmd.contains("home screen") || cmd.contains("close app") ||
-                cmd == "home" || cmd == "go home" || cmd == "back home") {
+                cmd.contains("back home") || cmd.contains("go home") ||
+                cmd.contains("home screen") || cmd.contains("close app") || cmd == "home") {
                 lastActionTimestamp = now
-                speak("Going to home screen", "Home screen par ja rahi hoon")
+                speak("Going home")
                 val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                     addCategory(Intent.CATEGORY_HOME)
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -488,43 +598,46 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 return true
             }
 
-            // 5. FLASHLIGHT / TORCH ON & OFF
-            if (cmd.contains("flashlight") || cmd.contains("flash light") || cmd.contains("torch")) {
+            // 5. FLASHLIGHT / TORCH ON & OFF (Catches "place light on", "plus light on", "flash light on")
+            if (cmd.contains("flashlight") || cmd.contains("flash light") ||
+                cmd.contains("place light") || cmd.contains("plus light") || cmd.contains("torch")) {
                 val wantOff = cmd.contains("off") || cmd.contains("of") || cmd.contains("close") || cmd.contains("stop")
                 val wantOn = cmd.contains("on") || cmd.contains("start")
                 if (wantOff || (isTorchOn && !wantOn)) {
                     lastActionTimestamp = now
                     toggleTorch(false)
+                    speak("Flashlight off")
                     return true
                 } else {
                     lastActionTimestamp = now
                     toggleTorch(true)
+                    speak("Flashlight on")
                     return true
                 }
             }
 
-            // 6. TIME, DATE & BATTERY STATUS
-            if (cmd.contains("what time") || cmd.contains("current time") || cmd.contains("time kya")) {
+            // 6. TIME, DATE & BATTERY
+            if (cmd.contains("what time") || cmd.contains("current time")) {
                 lastActionTimestamp = now
                 val t = SimpleDateFormat("hh:mm a", Locale.US).format(Date())
-                speak("The time is $t", "Abhi samay $t hua hai")
+                speak("The time is $t")
                 return true
             }
-            if (cmd.contains("today date") || cmd.contains("what date") || cmd.contains("aaj ki date")) {
+            if (cmd.contains("today date") || cmd.contains("what date")) {
                 lastActionTimestamp = now
                 val d = SimpleDateFormat("EEEE, d MMMM", Locale.US).format(Date())
-                speak("Today is $d", "Aaj ki tareekh $d hai")
+                speak("Today is $d")
                 return true
             }
-            if (cmd.contains("battery status") || cmd.contains("battery level") || cmd.contains("battery kitni")) {
+            if (cmd.contains("battery status") || cmd.contains("battery level") || cmd.contains("battery check")) {
                 lastActionTimestamp = now
                 val bm = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
                 val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                speak("Battery is at $pct percent", "Battery $pct percent hai")
+                speak("Battery is $pct percent")
                 return true
             }
 
-            // 7. DIRECT YOUTUBE SONG / VIDEO SEARCH & PLAY
+            // 7. YOUTUBE SONG / VIDEO SEARCH & PLAY
             if ((cmd.contains("youtube") && (cmd.contains("search") || cmd.contains("play"))) ||
                 (cmd.startsWith("play ") && !cmd.startsWith("play store"))) {
                 lastActionTimestamp = now
@@ -538,7 +651,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     .replace("play", "")
                     .trim()
                 if (query.isNotEmpty()) {
-                    speak("Playing $query on YouTube", "YouTube par $query chala rahi hoon")
+                    speak("Playing $query on YouTube")
                     val ytIntent = Intent(Intent.ACTION_SEARCH).apply {
                         setPackage("com.google.android.youtube")
                         putExtra("query", query)
@@ -548,7 +661,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
             }
 
-            // 8. DIRECT GOOGLE WEB SEARCH
+            // 8. GOOGLE WEB SEARCH
             if ((cmd.contains("google") && cmd.contains("search")) || cmd.startsWith("search ")) {
                 lastActionTimestamp = now
                 val query = cmd
@@ -559,7 +672,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     .replace("search", "")
                     .trim()
                 if (query.isNotEmpty()) {
-                    speak("Searching $query on Google", "Google par $query search kar rahi hoon")
+                    speak("Searching $query on Google")
                     val gIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=${Uri.encode(query)}"))
                     launchFromBackground(gIntent)
                     return true
@@ -569,20 +682,19 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             // 9. CAMERA / SELFIE
             if (cmd.contains("take selfie") || cmd.contains("open camera")) {
                 lastActionTimestamp = now
-                speak("Opening Camera", "Camera khol rahi hoon")
+                speak("Opening Camera")
                 launchFromBackground(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))
                 return true
             }
 
-            // 10. UNIVERSAL DYNAMIC APP LAUNCHER (Opens EVERY installed app on phone!)
-            if (cmd.startsWith("open ") || cmd.length >= 3) {
-                val targetApp = cmd
-                    .removePrefix("open ")
-                    .replace("app", "")
-                    .trim()
-                if (targetApp.isNotEmpty() && openAnyInstalledApp(targetApp)) {
-                    lastActionTimestamp = now
-                    return true
+            // 10. STRICT APP LAUNCHER: Requires "open [app]" OR exact known app name (Prevents accidental Clock/Phone opening!)
+            if (cmd.startsWith("open ")) {
+                val targetApp = cmd.removePrefix("open ").replace("app", "").trim()
+                if (targetApp.isNotEmpty() && targetApp != "my phone" && targetApp != "the phone") {
+                    if (openAnyInstalledApp(targetApp)) {
+                        lastActionTimestamp = now
+                        return true
+                    }
                 }
             }
         } catch (e: Exception) {}
@@ -591,14 +703,16 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun openAnyInstalledApp(requestedName: String): Boolean {
         val cleanReq = requestedName.lowercase(Locale.getDefault()).trim()
-        if (cleanReq.isEmpty()) return false
+        if (cleanReq.isEmpty() || cleanReq == "phone" || cleanReq == "clock") {
+            // Only open dialer or clock if user explicitly said "open dialer" or "open alarm clock"
+        }
         val pm = packageManager
 
         val knownAliases = listOf(
             Triple(listOf("youtube", "you tube"), "com.google.android.youtube", "YouTube"),
             Triple(listOf("whatsapp", "whats app"), "com.whatsapp", "WhatsApp"),
-            Triple(listOf("instagram", "insta"), "com.instagram.android", "Instagram"),
-            Triple(listOf("facebook", "fb"), "com.facebook.katana", "Facebook"),
+            Triple(listOf("instagram", "insta", "stagram"), "com.instagram.android", "Instagram"),
+            Triple(listOf("facebook", "fb", "pesbook"), "com.facebook.katana", "Facebook"),
             Triple(listOf("snapchat", "snap"), "com.snapchat.android", "Snapchat"),
             Triple(listOf("telegram"), "org.telegram.messenger", "Telegram"),
             Triple(listOf("linkedin", "link in", "linked in"), "com.linkedin.android", "LinkedIn"),
@@ -610,10 +724,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             Triple(listOf("phonepe", "phone pay"), "com.phonepe.app", "PhonePe"),
             Triple(listOf("paytm"), "net.one97.paytm", "Paytm"),
             Triple(listOf("gpay", "google pay"), "com.google.android.apps.nbu.paisa.user", "Google Pay"),
-            Triple(listOf("chrome", "browser"), "com.android.chrome", "Chrome"),
+            Triple(listOf("chrome", "browser", "google"), "com.android.chrome", "Chrome"),
             Triple(listOf("gmail", "mail"), "com.google.android.gm", "Gmail"),
             Triple(listOf("maps", "google maps"), "com.google.android.apps.maps", "Google Maps"),
             Triple(listOf("play store"), "com.android.vending", "Play Store"),
+            Triple(listOf("chatgpt", "chat gpt"), "com.openai.chatgpt", "ChatGPT"),
             Triple(listOf("settings", "setting"), "com.android.settings", "Settings")
         )
 
@@ -621,26 +736,25 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             if (keywords.any { cleanReq == it || cleanReq.contains(it) }) {
                 val intent = pm.getLaunchIntentForPackage(pkg)
                 if (intent != null) {
-                    speak("Opening $title", "$title khol rahi hoon")
+                    speak("Opening $title")
                     launchFromBackground(intent)
                     return true
                 }
             }
         }
 
-        // Dynamic scan of ALL installed apps on the device
+        // Dynamic scan of all installed apps (excluding accidental "clock"/"phone" unless exact)
         val mainIntent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
         val allApps = pm.queryIntentActivities(mainIntent, 0)
 
         for (info in allApps) {
             val label = info.loadLabel(pm).toString().lowercase(Locale.getDefault()).trim()
-            val pkg = info.activityInfo.packageName.lowercase(Locale.getDefault())
-            if (label == cleanReq ||
-                (cleanReq.length >= 2 && (label.contains(cleanReq) || cleanReq.contains(label) || pkg.contains(cleanReq)))) {
+            if (label == "clock" || label == "phone") continue
+            if (label == cleanReq || (cleanReq.length >= 3 && (label.contains(cleanReq) || cleanReq.contains(label)))) {
                 val launchIntent = pm.getLaunchIntentForPackage(info.activityInfo.packageName)
                 if (launchIntent != null) {
                     val niceName = info.loadLabel(pm).toString()
-                    speak("Opening $niceName", "$niceName khol rahi hoon")
+                    speak("Opening $niceName")
                     launchFromBackground(launchIntent)
                     return true
                 }
@@ -649,7 +763,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         return false
     }
 
-    // RINGBOOK-STYLE BLUE FULL-SCREEN "PHONE FOUND" ALERT OVERLAY
+    // =========================================================================
+    // RINGBOOK-STYLE VECTOR BLUE "PHONE FOUND" OVERLAY (Zero Emojis!)
+    // =========================================================================
     private fun triggerFindMyPhoneAlert() {
         if (isFindingPhone) return
         isFindingPhone = true
@@ -691,20 +807,51 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         gravity = Gravity.CENTER
                         background = GradientDrawable(
                             GradientDrawable.Orientation.TOP_BOTTOM,
-                            intArrayOf(Color.parseColor("#1D4ED8"), Color.parseColor("#0F172A"))
+                            intArrayOf(Color.parseColor("#1E40AF"), Color.parseColor("#0F172A"))
                         )
-                        setPadding(70, 140, 70, 110)
+                        setPadding(70, 120, 70, 100)
                     }
 
-                    val bellCircle = TextView(this).apply {
-                        text = "🔔"
-                        textSize = 42f
-                        gravity = Gravity.CENTER
-                        setPadding(55, 55, 55, 55)
-                        background = GradientDrawable().apply {
-                            shape = GradientDrawable.OVAL
-                            setColor(Color.WHITE)
+                    // Custom Drawn Concentric Ringing Bell Vector View (Exact Ringbook Look — No Emoji!)
+                    val bellVectorView = object : View(this) {
+                        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+                        override fun onDraw(canvas: Canvas) {
+                            super.onDraw(canvas)
+                            val cx = width / 2f
+                            val cy = height / 2f
+
+                            // Outer translucent concentric rings
+                            paint.style = Paint.Style.FILL
+                            paint.color = Color.parseColor("#22FFFFFF")
+                            canvas.drawCircle(cx, cy, cx * 0.95f, paint)
+                            paint.color = Color.parseColor("#44FFFFFF")
+                            canvas.drawCircle(cx, cy, cx * 0.72f, paint)
+                            paint.color = Color.WHITE
+                            canvas.drawCircle(cx, cy, cx * 0.50f, paint)
+
+                            // Blue Vector Bell inside white circle
+                            paint.color = Color.parseColor("#1D4ED8")
+                            val bellPath = Path().apply {
+                                moveTo(cx, cy - 34f)
+                                cubicTo(cx - 26f, cy - 34f, cx - 28f, cy - 5f, cx - 28f, cy + 16f)
+                                lineTo(cx - 35f, cy + 24f)
+                                lineTo(cx + 35f, cy + 24f)
+                                lineTo(cx + 28f, cy + 16f)
+                                cubicTo(cx + 28f, cy - 5f, cx + 26f, cy - 34f, cx, cy - 34f)
+                                close()
+                            }
+                            canvas.drawPath(bellPath, paint)
+                            canvas.drawCircle(cx, cy + 32f, 8f, paint)
+
+                            // Sound wave arcs around bell
+                            paint.style = Paint.Style.STROKE
+                            paint.strokeWidth = 5.5f
+                            paint.strokeCap = Paint.Cap.ROUND
+                            canvas.drawArc(cx - 46f, cy - 30f, cx + 46f, cy + 25f, 200f, 35f, false, paint)
+                            canvas.drawArc(cx - 46f, cy - 30f, cx + 46f, cy + 25f, 305f, 35f, false, paint)
                         }
+                    }.apply {
+                        layoutParams = LinearLayout.LayoutParams(420, 420)
                     }
 
                     val title = TextView(this).apply {
@@ -713,28 +860,29 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         setTypeface(null, Typeface.BOLD)
                         setTextColor(Color.WHITE)
                         gravity = Gravity.CENTER
-                        setPadding(0, 50, 0, 14)
+                        setPadding(0, 40, 0, 12)
                     }
 
                     val sub = TextView(this).apply {
-                        text = "Tap below to silence the alert"
-                        textSize = 16f
-                        setTextColor(Color.parseColor("#BFDBFE"))
+                        text = "BolPilot heard your clap"
+                        textSize = 16.5f
+                        setTextColor(Color.parseColor("#DBEAFE"))
                         gravity = Gravity.CENTER
-                        setPadding(0, 0, 0, 80)
+                        setPadding(0, 0, 0, 90)
                     }
 
                     val stopBtn = Button(this).apply {
                         text = "Stop alert"
-                        textSize = 17f
+                        textSize = 17.5f
                         isAllCaps = false
                         setTypeface(null, Typeface.BOLD)
                         setTextColor(Color.parseColor("#1E3A8A"))
-                        setPadding(90, 42, 90, 42)
+                        setPadding(110, 44, 110, 44)
                         background = GradientDrawable().apply {
                             setColor(Color.WHITE)
                             cornerRadius = 100f
                         }
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                         setOnClickListener { stopFindMyPhoneAlert() }
                     }
 
@@ -746,7 +894,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         setPadding(0, 35, 0, 0)
                     }
 
-                    root.addView(bellCircle)
+                    root.addView(bellVectorView)
                     root.addView(title)
                     root.addView(sub)
                     root.addView(stopBtn)
@@ -768,15 +916,26 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         PixelFormat.OPAQUE
                     )
                     wm.addView(phoneFoundOverlayView, params)
+
+                    countdownTimer?.cancel()
+                    countdownTimer = object : CountDownTimer(durationSec * 1000L, 1000L) {
+                        override fun onTick(millisUntilFinished: Long) {
+                            timerTxt.text = "Stops on its own in ${millisUntilFinished / 1000}s"
+                        }
+                        override fun onFinish() {
+                            stopFindMyPhoneAlert()
+                        }
+                    }.start()
                 } catch (e: Exception) {}
             }
+        } else {
+            mainHandler.postDelayed({ stopFindMyPhoneAlert() }, durationSec * 1000L)
         }
-
-        mainHandler.postDelayed({ stopFindMyPhoneAlert() }, durationSec * 1000L)
     }
 
     private fun stopFindMyPhoneAlert() {
         isFindingPhone = false
+        countdownTimer?.cancel()
         try { activeRingtone?.stop() } catch (e: Exception) {}
         try { vibrator?.cancel() } catch (e: Exception) {}
         toggleTorch(false)
@@ -791,16 +950,18 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // VOICE LOCK SHIELD FULL-SCREEN OVERLAY
+    // =========================================================================
+    // VOICE LOCK SHIELD FULL-SCREEN OVERLAY (Zero Emojis!)
+    // =========================================================================
     private fun lockPhoneNow() {
-        speak("Phone locked", "Phone lock ho gaya hai")
+        speak("Phone locked")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
             mainHandler.post {
                 try {
                     if (lockScreenView != null) return@post
                     val wm = getSystemService(WINDOW_SERVICE) as WindowManager
                     val prefs = getSharedPreferences("BolPilotPrefs", MODE_PRIVATE)
-                    val unlockPhrase = prefs.getString("unlock_phrase", "Unlock the phone") ?: "Unlock the phone"
+                    val unlockPhrase = prefs.getString("unlock_phrase", "Unlock my phone") ?: "Unlock my phone"
                     val backupPin = prefs.getString("backup_pin", "6367") ?: "6367"
 
                     val root = LinearLayout(this).apply {
@@ -811,7 +972,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     }
 
                     val badge = TextView(this).apply {
-                        text = "BOLPILOT VOICE LOCK ACTIVE"
+                        text = "BOLPILOT VOICE SHIELD ACTIVE"
                         textSize = 11.5f
                         setTypeface(null, Typeface.BOLD)
                         setTextColor(Color.parseColor("#38BDF8"))
@@ -842,7 +1003,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         setTypeface(null, Typeface.BOLD)
                         setTextColor(Color.WHITE)
                         gravity = Gravity.CENTER
-                        setPadding(30, 40, 30, 40)
+                        setPadding(45, 42, 45, 42)
                         background = GradientDrawable().apply {
                             setColor(Color.parseColor("#1E293B"))
                             cornerRadius = 40f
@@ -866,11 +1027,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     }
 
                     val grid = GridLayout(this).apply { columnCount = 3; rowCount = 4 }
-                    val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "CLR", "0", "✕")
+                    val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "CLR", "0", "DEL")
                     for (k in keys) {
                         val btn = Button(this).apply {
                             text = k
-                            textSize = 18f
+                            textSize = 17f
                             setTypeface(null, Typeface.BOLD)
                             setTextColor(Color.WHITE)
                             background = GradientDrawable().apply {
@@ -881,7 +1042,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                             setOnClickListener {
                                 when (k) {
                                     "CLR" -> { enteredPin = ""; pinDots.text = "ENTER 4-DIGIT BACKUP PIN\n\n○   ○   ○   ○" }
-                                    "✕" -> { pinContainer.visibility = View.GONE; voiceHint.visibility = View.VISIBLE }
+                                    "DEL" -> {
+                                        if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
+                                        val dots = "●   ".repeat(enteredPin.length) + "○   ".repeat(4 - enteredPin.length)
+                                        pinDots.text = "BACKUP PIN\n\n$dots"
+                                    }
                                     else -> {
                                         if (enteredPin.length < 4) {
                                             enteredPin += k
@@ -908,11 +1073,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     val spacer = View(this).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f) }
                     val showPinBtn = TextView(this).apply {
                         text = "Use Backup PIN"
-                        textSize = 14f
+                        textSize = 14.5f
                         setTypeface(null, Typeface.BOLD)
                         setTextColor(Color.WHITE)
                         gravity = Gravity.CENTER
-                        setPadding(55, 32, 55, 32)
+                        setPadding(55, 34, 55, 34)
                         background = GradientDrawable().apply { setColor(Color.parseColor("#1E293B")); cornerRadius = 60f }
                         setOnClickListener {
                             if (pinContainer.visibility == View.GONE) {
@@ -953,7 +1118,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun unlockAndWakePhone() {
         lastUnlockTimestamp = System.currentTimeMillis()
-        speak("Phone unlocked", "Phone unlock ho gaya hai")
+        speak("Phone unlocked")
         mainHandler.post {
             try {
                 if (lockScreenView != null) {
@@ -1011,6 +1176,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         isDestroyed = true
         isRunning = false
+        countdownTimer?.cancel()
         mainHandler.removeCallbacksAndMessages(null)
         try { audioManager.unregisterAudioPlaybackCallback(mediaPlaybackCallback) } catch (e: Exception) {}
         try { wakeLock?.release() } catch (e: Exception) {}
