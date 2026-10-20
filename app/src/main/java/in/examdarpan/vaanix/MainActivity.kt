@@ -158,7 +158,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             setPadding(dp(6), dp(5), dp(6), dp(5))
         }
         bottomNav.addView(navButton("⌂\nHome", "home"), LinearLayout.LayoutParams(0, dp(58), 1f))
-        bottomNav.addView(navButton("◷\nHistory", "history"), LinearLayout.LayoutParams(0, dp(58), 1f))
+        bottomNav.addView(navButton("◎\nProfile", "profile"), LinearLayout.LayoutParams(0, dp(58), 1f))
         bottomNav.addView(navButton("⚙\nSettings", "settings"), LinearLayout.LayoutParams(0, dp(58), 1f))
         root.addView(bottomNav, LinearLayout.LayoutParams(-1, dp(68)))
         setContentView(root)
@@ -238,7 +238,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         col.addView(sectionTitle("TRY SAYING"))
         col.addView(text("Quick commands", 18f, white, true).apply { setPadding(0, dp(3), 0, dp(10)) })
-        val chips = listOf("Open YouTube", "What time is it?", "Open WhatsApp", "Today's date", "Open settings", "Battery status")
+        val chips = listOf("Open YouTube", "Open WhatsApp", "Open Gmail", "Open Instagram", "Turn flashlight on", "Turn flashlight off", "What time is it?", "Today date", "Battery status", "Open camera", "Lock phone", "Find my phone")
         val chipWrap = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         chips.chunked(2).forEach { pair ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
